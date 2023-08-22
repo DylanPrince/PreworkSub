@@ -1,0 +1,12 @@
+<resources>
+    <string name="app_name">My Application</string>
+    <string name="todo">TODO</string>
+    <string name="button">Button</string>
+    <string name="hello_my_name_is_dylan">Hello My name is Dylan!</string>
+    <string name="hello_my_name_is_dylan_i_love_making_andriod_apps">hello my name is dylan i love making andriod apps</string>
+    <string name="hello_my_name_is_dylan_i_love_making_andriod_apps_for_everyone_to_use" />
+    <string name="prompt">Hello my name is Dylan Prince i love making andriod apps for everyone to use and enjoy</string>
+    <string name="Say_Hello">Say Hello!</string>
+    <string name="Say_hello">Say Hello!</string>
+    <string name="But">Say Hello</string>
+</resources>
