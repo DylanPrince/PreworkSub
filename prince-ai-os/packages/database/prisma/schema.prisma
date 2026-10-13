@@ -1,0 +1,303 @@
+// Prince AI OS data model. Postgres is the system of record; Redis/BullMQ only carries job ids.
+
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "esm"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------------------------------------------------------------------------
+// Authentication (Better Auth core schema)
+// ---------------------------------------------------------------------------
+
+model User {
+  id            String       @id
+  name          String
+  email         String       @unique
+  emailVerified Boolean      @default(false)
+  image         String?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  sessions      Session[]
+  accounts      Account[]
+  memberships   Membership[]
+  tasks         Task[]
+
+  @@map("user")
+}
+
+model Session {
+  id        String   @id
+  expiresAt DateTime
+  token     String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("session")
+}
+
+model Account {
+  id                    String    @id
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([userId])
+  @@map("account")
+}
+
+model Verification {
+  id         String   @id
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
+  @@map("verification")
+}
+
+// ---------------------------------------------------------------------------
+// Business workspaces
+// ---------------------------------------------------------------------------
+
+enum MembershipRole {
+  owner
+  admin
+  member
+  viewer
+}
+
+model Business {
+  id            String       @id @default(cuid())
+  name          String
+  slug          String       @unique
+  description   String       @default("")
+  businessModel String       @default("")
+  goals         String[]     @default([])
+  archivedAt    DateTime?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  memberships   Membership[]
+  agents        Agent[]
+  tasks         Task[]
+  runs          AgentRun[]
+}
+
+model Membership {
+  id         String         @id @default(cuid())
+  businessId String
+  userId     String
+  role       MembershipRole @default(member)
+  createdAt  DateTime       @default(now())
+  business   Business       @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  user       User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([businessId, userId])
+  @@index([userId])
+}
+
+// ---------------------------------------------------------------------------
+// Agent registry
+// ---------------------------------------------------------------------------
+
+enum AgentStatus {
+  active
+  disabled
+}
+
+/// An agent instance. businessId = null means it is a shared agent available to every workspace
+/// (it still only ever sees the data of the business a given task belongs to).
+model Agent {
+  id             String         @id @default(cuid())
+  templateKey    String?
+  businessId     String?
+  name           String
+  description    String
+  specialization String
+  division       String
+  status         AgentStatus    @default(active)
+  currentVersion Int            @default(1)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  business       Business?      @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  versions       AgentVersion[]
+  tasks          Task[]
+  runs           AgentRun[]
+
+  @@unique([templateKey, businessId])
+  @@index([businessId])
+}
+
+/// Immutable configuration snapshot. Runs pin the version they executed with.
+model AgentVersion {
+  id              String   @id @default(cuid())
+  agentId         String
+  version         Int
+  model           String
+  systemPrompt    String
+  allowedTools    String[] @default([])
+  permissions     String[] @default([])
+  outputSchemaKey String
+  maxOutputTokens Int      @default(4096)
+  budgetUsdPerRun Decimal  @default(0.5) @db.Decimal(12, 6)
+  timeoutMs       Int      @default(120000)
+  maxAttempts     Int      @default(3)
+  changeNote      String   @default("")
+  createdAt       DateTime @default(now())
+  agent           Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@unique([agentId, version])
+}
+
+// ---------------------------------------------------------------------------
+// Tasks and execution
+// ---------------------------------------------------------------------------
+
+enum TaskStatus {
+  open
+  queued
+  running
+  succeeded
+  failed
+  cancelled
+}
+
+enum RunStatus {
+  queued
+  running
+  succeeded
+  failed
+  cancelled
+}
+
+model Task {
+  id           String     @id @default(cuid())
+  businessId   String
+  agentId      String
+  title        String
+  instructions String
+  status       TaskStatus @default(open)
+  createdById  String
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  business     Business   @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  agent        Agent      @relation(fields: [agentId], references: [id], onDelete: Restrict)
+  createdBy    User       @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  runs         AgentRun[]
+
+  @@index([businessId, createdAt])
+}
+
+model AgentRun {
+  id                       String     @id @default(cuid())
+  taskId                   String
+  agentId                  String
+  agentVersion             Int
+  businessId               String
+  status                   RunStatus  @default(queued)
+  idempotencyKey           String     @unique
+  provider                 String
+  model                    String
+  attempts                 Int        @default(0)
+  inputTokens              Int?
+  outputTokens             Int?
+  cacheCreationInputTokens Int?
+  cacheReadInputTokens     Int?
+  /// USD cost computed from provider-reported usage and the ModelPrice table.
+  costUsd                  Decimal?   @db.Decimal(12, 6)
+  /// True when the price table had no verified entry for this model.
+  costIsEstimate           Boolean    @default(false)
+  stopReason               String?
+  output                   Json?
+  outputText               String?
+  errorCode                String?
+  errorMessage             String?
+  durationMs               Int?
+  /// Time spent waiting on the AI provider (excludes queue wait).
+  providerLatencyMs        Int?
+  queuedAt                 DateTime   @default(now())
+  startedAt                DateTime?
+  finishedAt               DateTime?
+  cancelRequestedAt        DateTime?
+  task                     Task       @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  agent                    Agent      @relation(fields: [agentId], references: [id], onDelete: Restrict)
+  business                 Business   @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  events                   RunEvent[]
+
+  @@index([businessId, queuedAt])
+  @@index([agentId, queuedAt])
+  @@index([status])
+}
+
+model RunEvent {
+  id        String   @id @default(cuid())
+  runId     String
+  type      String
+  message   String
+  data      Json?
+  createdAt DateTime @default(now())
+  run       AgentRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([runId, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Cost configuration and audit
+// ---------------------------------------------------------------------------
+
+/// Configurable price table (USD per million tokens). Source and verification date are recorded
+/// so stale prices are visible.
+model ModelPrice {
+  model             String   @id
+  displayName       String
+  inputPerMTok      Decimal  @db.Decimal(12, 6)
+  outputPerMTok     Decimal  @db.Decimal(12, 6)
+  cacheWritePerMTok Decimal  @db.Decimal(12, 6)
+  cacheReadPerMTok  Decimal  @db.Decimal(12, 6)
+  source            String
+  verifiedAt        DateTime
+  updatedAt         DateTime @updatedAt
+}
+
+enum ActorType {
+  user
+  agent
+  system
+}
+
+model AuditEvent {
+  id         String    @id @default(cuid())
+  actorType  ActorType
+  actorId    String?
+  businessId String?
+  action     String
+  targetType String
+  targetId   String?
+  summary    String
+  metadata   Json?
+  createdAt  DateTime  @default(now())
+
+  @@index([businessId, createdAt])
+  @@index([createdAt])
+}

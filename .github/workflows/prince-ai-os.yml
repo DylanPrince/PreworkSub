@@ -1,0 +1,73 @@
+name: Prince AI OS
+
+on:
+  pull_request:
+    paths: ["prince-ai-os/**", ".github/workflows/prince-ai-os.yml"]
+  push:
+    branches: [master]
+    paths: ["prince-ai-os/**", ".github/workflows/prince-ai-os.yml"]
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: prince-ai-os
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: prince
+          POSTGRES_PASSWORD: prince
+          POSTGRES_DB: prince_ai_os
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U prince" --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://prince:prince@localhost:5432/prince_ai_os
+      REDIS_URL: redis://localhost:6379
+      BETTER_AUTH_SECRET: ci-only-secret-ci-only-secret-0123456789
+      APP_ENV: test
+      AI_PROVIDER: mock
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: prince-ai-os/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: prince-ai-os/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - name: Create test databases
+        run: |
+          PGPASSWORD=prince psql -h localhost -U prince -d prince_ai_os -c "CREATE DATABASE prince_ai_os_it;"
+          PGPASSWORD=prince psql -h localhost -U prince -d prince_ai_os -c "CREATE DATABASE prince_ai_os_test;"
+      - run: pnpm format:check
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
+      - name: Install Playwright Chromium
+        run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm test:e2e
+        env:
+          CI: "true"
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: prince-ai-os/playwright-report
+          retention-days: 7
