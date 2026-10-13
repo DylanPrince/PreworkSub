@@ -80,6 +80,7 @@ describe("AnthropicProvider over HTTP", () => {
       outputTokens: 30,
       cacheCreationInputTokens: 0,
       cacheReadInputTokens: 10,
+      thinkingTokens: 0,
     });
     expect(r.provider).toBe("anthropic");
     expect(r.stopReason).toBe("end_turn");
@@ -95,8 +96,34 @@ describe("AnthropicProvider over HTTP", () => {
     });
     expect(c.body.messages).toEqual([{ role: "user", content: "<task>Say hi</task>" }]);
     expect(c.body.output_config).toMatchObject({ format: { type: "json_schema" } });
+    // Without an explicit effort the model's default applies, so none is sent.
+    expect(c.body.output_config).not.toHaveProperty("effort");
     // The key travels only in the auth header, never in the payload.
     expect(JSON.stringify(c.body)).not.toContain(FAKE_KEY);
+  });
+
+  it("sends the configured effort and records thinking tokens", async () => {
+    const { p, calls } = provider(async () =>
+      json(
+        200,
+        message({
+          usage: {
+            input_tokens: 120,
+            output_tokens: 900,
+            output_tokens_details: { thinking_tokens: 700 },
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+          },
+        }),
+      ),
+    );
+    const r = await p.completeStructured({ ...request, effort: "low" });
+    expect(calls[0]!.body.output_config).toMatchObject({
+      format: { type: "json_schema" },
+      effort: "low",
+    });
+    // Thinking is part of output tokens (and of the cost), reported separately for visibility.
+    expect(r.usage).toMatchObject({ outputTokens: 900, thinkingTokens: 700 });
   });
 
   it("does not retry inside the SDK (the job queue owns retries)", async () => {

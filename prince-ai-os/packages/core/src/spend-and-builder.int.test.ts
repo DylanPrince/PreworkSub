@@ -286,6 +286,58 @@ describe("spending limits", () => {
   });
 });
 
+describe("request limits", () => {
+  it("refuses an oversized prompt before any call or reservation", async () => {
+    const { task } = await createTask(db, queue, owner, {
+      businessId,
+      agentId: copywriterId,
+      title: "Huge brief",
+      instructions: "Write a headline for a tent.",
+    });
+    // Larger than any form allows, as forwarded results could be: about 100k estimated tokens.
+    await db.task.update({ where: { id: task.id }, data: { instructions: "x".repeat(320_000) } });
+    const run = await requestRun(db, queue, owner, task.id, {
+      provider: "anthropic",
+      policy: policy(),
+    });
+    const provider = new ScriptedProvider({ output: copyOutput });
+    const outcome = await executeRun(
+      { db, providers: { anthropic: provider }, budget: generous },
+      run.id,
+      { attempt: 1, maxAttempts: 3 },
+    );
+    expect(outcome.status).toBe("failed");
+    expect(provider.calls).toBe(0);
+    const saved = await db.agentRun.findUniqueOrThrow({ where: { id: run.id } });
+    expect(saved).toMatchObject({ errorCode: "input_too_large", reservedUsd: null, costUsd: null });
+  });
+
+  it("sends the version's effort and records thinking tokens across attempts", async () => {
+    const run = await liveRun();
+    const usage = {
+      inputTokens: 100,
+      outputTokens: 400,
+      cacheCreationInputTokens: 0,
+      cacheReadInputTokens: 0,
+      thinkingTokens: 300,
+    };
+    const flaky = new ScriptedProvider({
+      error: new ProviderError("invalid_output", "bad shape", true, usage),
+    });
+    const deps = (p: ScriptedProvider) => ({ db, providers: { anthropic: p }, budget: generous });
+    await executeRun(deps(flaky), run.id, { attempt: 1, maxAttempts: 2 });
+    const ok = new ScriptedProvider({ output: copyOutput, usage });
+    await executeRun(deps(ok), run.id, { attempt: 2, maxAttempts: 2 });
+
+    // The built-in copywriter's current version comes from the registry template.
+    expect(ok.requests[0]).toMatchObject({ effort: "medium", maxOutputTokens: 8192 });
+    const done = await db.agentRun.findUniqueOrThrow({ where: { id: run.id } });
+    expect(done).toMatchObject({ status: "succeeded", outputTokens: 800, thinkingTokens: 600 });
+    // Thinking is billed as output: 200 × $4/M + 800 × $20/M, nothing extra on top.
+    expect(Number(done.costUsd)).toBeCloseTo(0.0168, 6);
+  });
+});
+
 describe("AI status", () => {
   it("reports configuration and limits without exposing secrets", async () => {
     const s = await getAiStatus(db, policy({ budget: { dailyUsd: 0, monthlyUsd: 100000 } }));
@@ -308,6 +360,7 @@ describe("Agent Builder", () => {
       model: "claude-sonnet-5-5",
       outputSchemaKey: "general-report.v1",
       timeoutMs: 60_000,
+      effort: null,
       allowedTools: [],
       permissions: ["read:business"],
     });
@@ -333,6 +386,7 @@ describe("Agent Builder", () => {
     expect(await fieldsOf(agentInput({ model: "gpt-unknown" }))).toContain("model");
     expect(await fieldsOf(agentInput({ model: "mock" }))).toContain("model");
     expect(await fieldsOf(agentInput({ maxAttempts: 9 }))).toContain("maxAttempts");
+    expect(await fieldsOf(agentInput({ effort: "xhigh" as never }))).toContain("effort");
     await expect(
       createCustomAgent(db, owner, agentInput({ budgetUsdPerRun: 6 }), {
         policy: policy({ budget: { dailyUsd: 5, monthlyUsd: 50 } }),
@@ -482,7 +536,7 @@ describe("Agent Builder", () => {
       basedOnTemplateKey: "copywriting",
     });
     const { current } = await getAgentForBuilder(db, owner, copy.id);
-    expect(current.outputSchemaKey).toBe("copywriting.v1");
+    expect(current).toMatchObject({ outputSchemaKey: "copywriting.v1", effort: "medium" });
     await expect(
       duplicateAgent(db, outsider, copywriterId, businessId, policy()),
     ).rejects.toBeInstanceOf(ForbiddenError);

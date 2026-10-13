@@ -5,14 +5,23 @@ export interface TokenUsage {
   outputTokens: number;
   cacheCreationInputTokens: number;
   cacheReadInputTokens: number;
+  /** Part of outputTokens spent on thinking, when the provider reports it. Informational only:
+   * it is already included in outputTokens and therefore in the cost. */
+  thinkingTokens?: number;
 }
+
+export const REASONING_EFFORTS = ["low", "medium", "high"] as const;
+export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
 
 export interface StructuredCompletionRequest<T> {
   model: string;
   system: string;
   /** User turn content. Untrusted business data must be wrapped by the caller (see agents/prompt). */
   prompt: string;
+  /** Includes thinking tokens on models that think. */
   maxOutputTokens: number;
+  /** Omitted: the model's default effort. */
+  effort?: ReasoningEffort | null;
   outputSchema: z.ZodType<T>;
   timeoutMs: number;
   signal?: AbortSignal;

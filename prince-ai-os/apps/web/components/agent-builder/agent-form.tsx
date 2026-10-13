@@ -30,6 +30,8 @@ export interface AgentFormValues {
   budgetUsdPerRun: number;
   timeoutSeconds: number;
   maxAttempts: number;
+  /** "" means the model's default effort. */
+  effort: "" | "low" | "medium" | "high";
 }
 
 type Mode =
@@ -214,7 +216,7 @@ export function AgentForm({
           />,
           "Describe the role, method and quality bar. Shared guardrails (no invented data, no external actions, approval rules) are always added in front of these instructions.",
         )}
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {field(
             "outputSchemaKey",
             "Output format",
@@ -248,6 +250,21 @@ export function AgentForm({
             model &&
               `$${model.inputPerMTok} input / $${model.outputPerMTok} output per million tokens`,
           )}
+          {field(
+            "effort",
+            "Effort",
+            <Select
+              {...aria("effort", true)}
+              value={values.effort}
+              onChange={(e) => set("effort", e.target.value as AgentFormValues["effort"])}
+            >
+              <option value="">Model default</option>
+              <option value="low">Low</option>
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
+            </Select>,
+            "How much the model reasons before answering. Thinking is billed as output and counts toward max output tokens, so higher effort needs a larger limit.",
+          )}
         </div>
       </fieldset>
 
@@ -257,7 +274,7 @@ export function AgentForm({
           "maxOutputTokens",
           "Max output tokens",
           <Input
-            {...aria("maxOutputTokens")}
+            {...aria("maxOutputTokens", true)}
             type="number"
             inputMode="numeric"
             min={256}
@@ -266,6 +283,7 @@ export function AgentForm({
             value={values.maxOutputTokens}
             onChange={(e) => set("maxOutputTokens", Number(e.target.value))}
           />,
+          "Includes thinking. A run that reaches it fails instead of returning a cut-off answer.",
         )}
         {field(
           "budgetUsdPerRun",

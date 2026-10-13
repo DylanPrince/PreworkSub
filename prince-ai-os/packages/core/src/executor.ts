@@ -1,16 +1,16 @@
-import { z } from "zod";
 import type { Prisma, PrismaClient } from "@prince/database";
 import {
+  MAX_ESTIMATED_INPUT_TOKENS,
   ProviderError,
   computeCostUsd,
   estimateMaxCostUsd,
-  roughTokenEstimate,
   type AIProvider,
   type ProviderErrorCode,
   type ProviderName,
   type TokenUsage,
 } from "@prince/ai";
 import { OUTPUT_SCHEMAS, buildSystemPrompt, buildUserPrompt, getContract } from "@prince/agents";
+import { estimateInputTokens, priceNumbers, schemaJsonFor } from "./estimate";
 import { recordAudit } from "./audit";
 import { reserveBudget, type BudgetLimits } from "./budget";
 
@@ -44,11 +44,6 @@ const POSSIBLY_BILLED_WITHOUT_USAGE: ProviderErrorCode[] = [
   "provider_error",
 ];
 
-/** Token estimate for the budget pre-check, with headroom for tokenizer variance and schema overhead. */
-export function estimateInputTokens(system: string, prompt: string, schemaJson: string): number {
-  return Math.ceil(roughTokenEstimate(system + prompt + schemaJson) * 1.25) + 500;
-}
-
 /**
  * Executes one agent run end to end. Every state transition is written to Postgres before the
  * function returns, so a worker crash leaves an inspectable record. Returns "retry" when the
@@ -75,6 +70,7 @@ export async function executeRun(
     outputTokens: run.outputTokens ?? 0,
     cacheCreationInputTokens: run.cacheCreationInputTokens ?? 0,
     cacheReadInputTokens: run.cacheReadInputTokens ?? 0,
+    thinkingTokens: run.thinkingTokens ?? 0,
   };
   let costIsEstimate = run.costIsEstimate;
 
@@ -85,6 +81,7 @@ export async function executeRun(
     cacheCreationInputTokens:
       prior.cacheCreationInputTokens + (usage?.cacheCreationInputTokens ?? 0),
     cacheReadInputTokens: prior.cacheReadInputTokens + (usage?.cacheReadInputTokens ?? 0),
+    thinkingTokens: prior.thinkingTokens + (usage?.thinkingTokens ?? 0),
     costUsd: prior.costUsd + (attemptCostUsd ?? 0),
     costIsEstimate,
     reservedUsd: null,
@@ -163,6 +160,19 @@ export async function executeRun(
   const prompt = buildUserPrompt(run.business, run.task);
   const schema = OUTPUT_SCHEMAS[contract.key];
 
+  // Prompts are capped so cost estimates stay within the flat price tier of every model.
+  const inputEstimate = estimateInputTokens(system, prompt, schemaJsonFor(contract.key));
+  if (inputEstimate > MAX_ESTIMATED_INPUT_TOKENS) {
+    return finish(
+      "failed",
+      {
+        errorCode: "input_too_large",
+        errorMessage: `The prompt is too large (about ${inputEstimate} tokens; the limit is ${MAX_ESTIMATED_INPUT_TOKENS}). Shorten the task instructions or the forwarded results.`,
+      },
+      "Blocked before any call: prompt exceeds the input limit",
+    );
+  }
+
   // Budget enforcement uses the price table; models without a price entry are refused.
   const priceModel = isMock ? "mock" : version.model;
   const price = await db.modelPrice.findUnique({ where: { model: priceModel } });
@@ -173,17 +183,10 @@ export async function executeRun(
       "Model has no price entry; refusing to run without cost tracking",
     );
   }
-  const priceNums = {
-    inputPerMTok: Number(price.inputPerMTok),
-    outputPerMTok: Number(price.outputPerMTok),
-    cacheWritePerMTok: Number(price.cacheWritePerMTok),
-    cacheReadPerMTok: Number(price.cacheReadPerMTok),
-  };
-  const projected = estimateMaxCostUsd(
-    estimateInputTokens(system, prompt, JSON.stringify(z.toJSONSchema(schema))),
-    version.maxOutputTokens,
-    priceNums,
-  );
+  const priceNums = priceNumbers(price);
+  // Worst case for one attempt: the estimated input plus the full output allowance (thinking
+  // included), at the model's price.
+  const projected = estimateMaxCostUsd(inputEstimate, version.maxOutputTokens, priceNums);
   const perRunLimit = Number(version.budgetUsdPerRun);
   if (projected > perRunLimit) {
     return finish(
@@ -239,6 +242,7 @@ export async function executeRun(
       system,
       prompt,
       maxOutputTokens: version.maxOutputTokens,
+      effort: version.effort,
       outputSchema: schema as never,
       timeoutMs: version.timeoutMs,
       signal: controller.signal,
@@ -264,7 +268,7 @@ export async function executeRun(
     return finish(
       "succeeded",
       { ...common, errorCode: null, errorMessage: null },
-      `Completed: ${result.usage.inputTokens} in / ${result.usage.outputTokens} out tokens, $${attemptCost.toFixed(6)}`,
+      `Completed: ${result.usage.inputTokens} in / ${result.usage.outputTokens} out tokens${result.usage.thinkingTokens ? ` (${result.usage.thinkingTokens} thinking)` : ""}, $${attemptCost.toFixed(6)}`,
     );
   } catch (error) {
     const err =

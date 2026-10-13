@@ -7,7 +7,8 @@ application-managed AI agents, while the owner keeps control of money, publishin
 
 - `apps/web` — Next.js 16 App Router UI, Better Auth, server actions, `/api/v1/*` route handlers.
 - `apps/worker` — BullMQ worker that executes agent runs (`executeRun`).
-- `packages/core` — service layer (access control, businesses, tasks, runs, executor, budgets, metrics, audit).
+- `packages/core` — service layer (access control, businesses, tasks, runs, executor, budgets, estimates,
+  Agent Builder, Command Center, metrics, audit).
 - `packages/ai` — provider abstraction, Anthropic SDK provider, mock provider, price table.
 - `packages/agents` — agent registry, output schemas and contracts (mock output + evaluation), prompt assembly.
 - `packages/database` — Prisma 7 schema, migrations, seed. `packages/shared` — env, queue contracts.

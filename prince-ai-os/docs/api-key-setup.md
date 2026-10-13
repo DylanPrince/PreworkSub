@@ -12,7 +12,7 @@ committed or pasted into chat.
 1. In the Anthropic Console, create a new API key used only by Prince AI OS, so it can be revoked
    on its own.
 2. In the Console, set a spend limit for the workspace that owns the key. This is the only hard
-   billing cap. Prince AI OS's own limits are application safeguards (see section 5).
+   billing cap. Prince AI OS's own limits are application safeguards (see section 6).
 
 ## 2. Put the key in the server environment
 
@@ -77,18 +77,36 @@ sensible there.
    would be exceeded … this run could cost up to $…") and the timeline shows it was blocked before
    any API request. Cost recorded: none. Set the limit back to `5` and restart.
 
-## 4. First paid run
+## 4. Models and prices in use
+
+Model IDs, availability and prices were checked against the official Anthropic documentation on
+2026-10-13 (`docs/technical-decisions.md` lists the sources). All four offered models are Active:
+
+| Model             | Input / MTok | Output / MTok | Cache read / MTok |
+| ----------------- | ------------ | ------------- | ----------------- |
+| Claude Haiku 5.5  | $0.10        | $0.50         | $0.01             |
+| Claude Sonnet 5.5 | $2           | $10           | $0.10             |
+| Claude Opus 5.5   | $4           | $20           | $0.20             |
+| Claude Fable 5.1  | $10          | $50           | $0.25             |
+
+Settings shows the prices actually used for accounting. Haiku 5.5 costs more for prompts above 100k
+tokens; Prince AI OS refuses prompts estimated above 80k, so that rate never applies. Opus 5.5 and
+Fable 5.1 always think before answering: thinking is billed as output and counts toward an agent's
+max output tokens, which the worst-case reservation already includes.
+
+## 5. First paid run
 
 1. Start with a dry run: **Dry run (mock)** on the task page or in Agent Builder. It is free and its
    output is labelled **Mock output**.
 2. For the first real call, use a small task and, ideally, a custom agent on Claude Haiku 5.5 with a
    low max-output-token setting (Agent Builder → New agent). Click **Run with Claude** (or **Test
    with Claude** in Agent Builder).
-3. On the run card confirm: the **Claude** badge (not Mock output), input/output tokens, a cost in
-   dollars, and a `started` timeline event that lists the amount reserved before the call.
+3. On the run card confirm: the **Claude** badge (not Mock output), input/output tokens (with the
+   thinking share, if any), a cost in dollars, and a `started` timeline event that lists the amount
+   reserved before the call.
 4. The header pill and the Integrations meters now include that cost.
 
-## 5. What the limits do and do not do
+## 6. What the limits do and do not do
 
 - Before every paid attempt the worker estimates the worst case (estimated input tokens with
   headroom plus the agent's max output tokens, at the model's price) and **reserves** it inside a
@@ -107,7 +125,7 @@ sensible there.
   for aborted calls can make Anthropic's bill differ. The Console spend limit from step 1 is the
   hard cap.
 
-## 6. Rotating or revoking the key
+## 7. Rotating or revoking the key
 
 Create the new key, replace the value in the server environment, restart both processes, run
 **Test connection**, then revoke the old key in the Console. To stop all paid calls immediately,

@@ -59,3 +59,25 @@ agents both reference a contract key, so custom agents get the same validation w
 
 Shared agents serve every business and there is no instance-admin role yet, so editing them would let
 one business change another's agents. Agent Builder copies them into a business instead.
+
+### D12 — Command Center plans first, then dispatches on the owner's word
+
+A request becomes a `Command` with a planning task run by the Executive Coordinator. The plan's
+workstreams are not run automatically: the owner reviews them, picks an agent for each (the
+suggestion matches the plan's role to an agent name), sees each worst-case cost and the batch total
+against what remains under the limits, and dispatches. A workstream unlocks only after the
+workstreams it depends on have succeeded, and their results (up to 6,000 characters each) are
+forwarded in its instructions. Each workstream is an ordinary task and run, so budgets, reservations,
+retries and audit apply unchanged. `@@unique([commandId, workstream])` makes double dispatch
+impossible. A paid batch whose combined worst case exceeds the remaining budget is refused before
+anything is created.
+
+### D13 — Effort per agent version; prompt-size cap; thinking tokens recorded
+
+Opus 5.5 and Fable 5.1 always think, and thinking counts toward `max_tokens`. Each agent version
+stores an optional effort (`low`, `medium`, `high`, or model default) sent as `output_config.effort`,
+and built-in agents use `medium` with larger output allowances (8k to 12k). Built-in agent versions
+come only from the registry, so the seed adds a new version when a template changes. Prompts
+estimated above 80k tokens are refused before any call, keeping every run inside the flat price tier
+(Haiku 5.5 charges more above 100k). Thinking tokens are stored per run for visibility; they are
+already part of output tokens and cost.

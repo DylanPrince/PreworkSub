@@ -4,6 +4,57 @@ Status legend: **Done and tested** means covered by automated tests that pass in
 browser. **Built, not yet verified live** means implemented and tested against fakes, but not yet
 exercised against the real external service.
 
+## 2026-10-13 — Session 3: AI Command Center, Anthropic docs verification
+
+**Done and tested**
+
+- AI Command Center (`/command`): describe an outcome, choose a business, and plan it with Claude or
+  a free dry run. The Executive Coordinator returns a plan (summary, workstreams with roles and
+  dependencies, risks, decisions for the owner). The owner reviews each workstream, picks an agent
+  (suggested from the plan's role), sees the worst-case cost of each and of the batch against what
+  remains under the limits, and dispatches. Dependent workstreams unlock only when the ones they
+  depend on succeed, and receive those results as context. Pages refresh while work is active.
+  Recent requests list with plan state and progress. Viewers can read; members and above dispatch.
+- Paid dispatch is refused before anything is created when the batch's combined worst case exceeds
+  what remains under the daily or monthly limit. Double dispatch is impossible (unique constraint).
+- Model IDs, availability and prices verified against the official Anthropic docs (details in
+  `docs/technical-decisions.md`). One correction: Sonnet 5.5 cache reads are $0.10/MTok, not $0.20.
+  The seed corrects price rows that still hold an earlier default and never overwrites edited ones.
+- Effort setting per agent version (Model default, Low, Medium, High), sent as
+  `output_config.effort`, editable in Agent Builder and shown on agent pages.
+- Thinking tokens recorded per run and shown on the run card ("incl. N thinking"); they are already
+  counted in output tokens and cost.
+- Prompts estimated above 80k tokens are refused before any call or reservation, keeping runs in
+  every model's flat price tier.
+- Built-in agents now use `medium` effort and larger output allowances (8,192; Market Research
+  12,000) because Opus 5.5 always thinks and thinking counts toward the limit. Existing installations
+  get this as a new agent version when the seed runs; earlier runs stay pinned to their version.
+
+**Built, not yet verified live**
+
+- Effort and thinking-token handling are tested through the real SDK against a fake HTTP layer. No
+  paid request has been made: the key is not configured and a live test needs your authorization.
+
+**Tests run (all passing)**
+
+- `pnpm typecheck`, `pnpm lint`, `pnpm format:check` clean.
+- `pnpm test`: 103 tests. New: Command Center (idempotent create, paid plan refused without a key,
+  plan to workstreams with suggestions and estimates, dependency-ordered dispatch with forwarded
+  results, double-dispatch refusal, paid batch refused over budget, viewer and outsider access), seed
+  (corrects a stale default price, keeps an edited price, adds a built-in version only when the
+  template changed), oversized prompt refused before any call, effort sent and thinking tokens
+  accumulated across retries, effort validation, verified price table pinned, effort and thinking
+  over HTTP.
+- `pnpm test:e2e`: 6 Playwright tests on a production build, including planning a request and
+  dispatching two dependent workstreams as dry runs. The e2e suite now signs in through the form once
+  and reuses the session, because the sign-in rate limit (kept as is) refused rapid repeated sign-ins.
+- Manual browser check of the Command Center and the agent form in dark, light and mobile.
+
+**Needs you**
+
+- A first live Claude run: add the key (see `docs/api-key-setup.md`) and tell me when you authorize
+  a live test.
+
 ## 2026-10-13 — Session 2: real Claude path, spending protection, Agent Builder
 
 **Done and tested**

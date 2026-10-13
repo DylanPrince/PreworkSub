@@ -92,6 +92,7 @@ export default async function ManageAgentPage({ params }: { params: Promise<{ id
                 budgetUsdPerRun: Number(current.budgetUsdPerRun),
                 timeoutSeconds: Math.round(current.timeoutMs / 1000),
                 maxAttempts: current.maxAttempts,
+                effort: current.effort ?? "",
               }}
               {...options}
               dailyLimitUsd={env.AI_DAILY_BUDGET_USD}

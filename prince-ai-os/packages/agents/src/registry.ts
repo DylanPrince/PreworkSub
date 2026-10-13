@@ -32,7 +32,10 @@ export interface ImplementedAgentTemplate extends TemplateBase {
   outputSchemaKey: OutputSchemaKey;
   allowedTools: string[];
   permissions: string[];
+  /** Includes thinking tokens, which Opus 5.5 and Fable 5.1 always produce. */
   maxOutputTokens: number;
+  /** Sent as output_config.effort; null keeps the model's default. */
+  effort: "low" | "medium" | "high" | null;
   budgetUsdPerRun: number;
   timeoutMs: number;
   maxAttempts: number;
@@ -61,7 +64,8 @@ const executiveCoordinator: ImplementedAgentTemplate = {
   outputSchemaKey: "executive-plan.v1",
   allowedTools: [],
   permissions: ["read:business"],
-  maxOutputTokens: 4096,
+  maxOutputTokens: 8192,
+  effort: "medium",
   budgetUsdPerRun: 0.25,
   timeoutMs: 120_000,
   maxAttempts: 3,
@@ -82,7 +86,8 @@ const marketResearch: ImplementedAgentTemplate = {
   outputSchemaKey: "market-research.v1",
   allowedTools: [],
   permissions: ["read:business"],
-  maxOutputTokens: 6000,
+  maxOutputTokens: 12_000,
+  effort: "medium",
   budgetUsdPerRun: 0.4,
   timeoutMs: 180_000,
   maxAttempts: 3,
@@ -103,7 +108,8 @@ const copywriter: ImplementedAgentTemplate = {
   outputSchemaKey: "copywriting.v1",
   allowedTools: [],
   permissions: ["read:business"],
-  maxOutputTokens: 4096,
+  maxOutputTokens: 8192,
+  effort: "medium",
   budgetUsdPerRun: 0.25,
   timeoutMs: 120_000,
   maxAttempts: 3,
@@ -123,7 +129,8 @@ const financialAnalyst: ImplementedAgentTemplate = {
   outputSchemaKey: "financial-analysis.v1",
   allowedTools: [],
   permissions: ["read:business"],
-  maxOutputTokens: 4096,
+  maxOutputTokens: 8192,
+  effort: "medium",
   budgetUsdPerRun: 0.25,
   timeoutMs: 120_000,
   maxAttempts: 3,

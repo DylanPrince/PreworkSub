@@ -49,7 +49,7 @@ export const NAV_SECTIONS: { title: string; items: NavItem[] }[] = [
         href: "/command",
         label: "AI Command Center",
         icon: MessageSquareText,
-        status: "planned",
+        status: "live",
         milestone: 3,
         summary:
           "Conversational interface that plans, estimates, requests approval and dispatches agent work.",

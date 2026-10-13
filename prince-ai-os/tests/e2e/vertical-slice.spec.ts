@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type BrowserContext, type Page } from "@playwright/test";
 
 const email = `owner+${Date.now()}@example.com`;
 const password = "correct-horse-battery-staple";
@@ -12,12 +12,24 @@ async function signUp(page: Page) {
   await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible();
 }
 
+let session: Awaited<ReturnType<BrowserContext["cookies"]>> | undefined;
+
+/**
+ * Signs in through the form once, then reuses that session: the auth rate limit on sign-in
+ * (a real protection) would otherwise refuse the rapid repeated sign-ins of a test run.
+ */
 async function signIn(page: Page) {
-  await page.goto("/sign-in");
-  await page.getByLabel("Email").fill(email);
-  await page.getByLabel("Password").fill(password);
-  await page.getByRole("button", { name: "Sign in" }).click();
+  if (session) {
+    await page.context().addCookies(session);
+    await page.goto("/");
+  } else {
+    await page.goto("/sign-in");
+    await page.getByLabel("Email").fill(email);
+    await page.getByLabel("Password").fill(password);
+    await page.getByRole("button", { name: "Sign in" }).click();
+  }
   await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible();
+  session = await page.context().cookies();
 }
 
 test.describe.serial("first vertical slice", () => {
@@ -145,6 +157,47 @@ test.describe.serial("first vertical slice", () => {
     ).toBeVisible();
     await expect(page.getByText(/Shorter reports/)).toBeVisible();
     await expect(page.getByRole("button", { name: "Save as v3" })).toBeVisible();
+  });
+
+  test("owner plans a request in the Command Center and dispatches workstreams in order", async ({
+    page,
+  }) => {
+    await signIn(page);
+    await page.goto("/command");
+    await page
+      .getByLabel("What do you want to achieve?")
+      .fill("Launch a lightweight camping stove line this quarter.");
+    // No API key here: planning with Claude is unavailable, the free dry run is not.
+    await expect(page.getByRole("button", { name: "Plan with Claude" })).toBeDisabled();
+    await page.getByRole("button", { name: "Dry run (mock)" }).click();
+
+    const plan = page.getByRole("region", { name: "Plan" });
+    await expect(plan.getByText("succeeded", { exact: true })).toBeVisible({ timeout: 30_000 });
+    await expect(plan.getByText(/came from the mock provider/)).toBeVisible();
+
+    const workstreams = page.getByRole("region", { name: "Workstreams" });
+    const research = workstreams.getByRole("listitem").filter({ hasText: "Research" }).first();
+    const finance = workstreams.getByRole("listitem").filter({ hasText: "Financial check" });
+    await expect(research.getByRole("checkbox")).toBeChecked();
+    await expect(finance.getByText("Waiting on Research")).toBeVisible();
+    await expect(workstreams.getByRole("button", { name: "Dispatch with Claude" })).toBeDisabled();
+
+    await workstreams.getByRole("button", { name: "Dispatch as dry run" }).click();
+    await expect(research.getByText("succeeded", { exact: true })).toBeVisible({
+      timeout: 30_000,
+    });
+
+    // Research finished, so the dependent workstream unlocks with a suggested agent.
+    await expect(finance.getByRole("combobox", { name: "Agent for Financial check" })).toHaveValue(
+      /.+/,
+    );
+    await workstreams.getByRole("button", { name: "Dispatch as dry run" }).click();
+    await expect(finance.getByText("succeeded", { exact: true })).toBeVisible({ timeout: 30_000 });
+
+    // The dependent task received the earlier result as context.
+    await finance.getByRole("link", { name: /Financial Analyst task/ }).click();
+    await expect(page.getByText(/Result of the earlier workstream "Research"/)).toBeVisible();
+    await expect(page.getByRole("link", { name: /Command Center request/ })).toBeVisible();
   });
 
   test("every sidebar page renders in light and dark mode", async ({ page }) => {

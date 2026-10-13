@@ -47,10 +47,11 @@ export default async function NewAgentPage({
               instructions: "",
               model: defaultModel,
               outputSchemaKey: "general-report.v1",
-              maxOutputTokens: 4096,
+              maxOutputTokens: 8192,
               budgetUsdPerRun: Math.min(0.25, env.AI_DAILY_BUDGET_USD),
               timeoutSeconds: 120,
               maxAttempts: 3,
+              effort: "",
             }}
             {...options}
             dailyLimitUsd={env.AI_DAILY_BUDGET_USD}

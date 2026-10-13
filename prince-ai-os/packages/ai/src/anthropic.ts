@@ -14,6 +14,7 @@ function usageFrom(u: Anthropic.Usage | undefined): TokenUsage {
     outputTokens: u?.output_tokens ?? 0,
     cacheCreationInputTokens: u?.cache_creation_input_tokens ?? 0,
     cacheReadInputTokens: u?.cache_read_input_tokens ?? 0,
+    thinkingTokens: u?.output_tokens_details?.thinking_tokens ?? 0,
   };
 }
 
@@ -101,7 +102,10 @@ export class AnthropicProvider implements AIProvider {
           max_tokens: req.maxOutputTokens,
           system: req.system,
           messages: [{ role: "user", content: req.prompt }],
-          output_config: { format: { type, schema } },
+          output_config: {
+            format: { type, schema },
+            ...(req.effort ? { effort: req.effort } : {}),
+          },
         },
         { timeout: req.timeoutMs, signal: req.signal },
       );
@@ -118,7 +122,7 @@ export class AnthropicProvider implements AIProvider {
       if (response.stop_reason === "max_tokens") {
         throw new ProviderError(
           "max_tokens",
-          "Output hit the agent's max token limit before completing",
+          "Output hit the agent's max output token limit before completing (thinking counts toward it)",
           false,
           usage,
         );

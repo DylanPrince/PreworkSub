@@ -42,6 +42,22 @@ export default async function TaskPage({ params }: { params: Promise<{ id: strin
           </>
         }
       />
+      {(task.commandId || task.kind === "test") && (
+        <p className="text-sm text-muted-foreground">
+          {task.commandId && (
+            <Link href={`/command/${task.commandId}`} className="text-primary hover:underline">
+              {task.workstream
+                ? `Workstream of a Command Center request`
+                : "Plan for a Command Center request"}
+            </Link>
+          )}
+          {task.kind === "test" && (
+            <Link href={`/agent-builder/${task.agent.id}`} className="text-primary hover:underline">
+              Agent Builder test run
+            </Link>
+          )}
+        </p>
+      )}
       <Card>
         <CardHeader>
           <CardTitle>Instructions</CardTitle>
@@ -91,7 +107,20 @@ export default async function TaskPage({ params }: { params: Promise<{ id: strin
                 />
                 <Metric
                   label="Output tokens"
-                  value={run.outputTokens == null ? "—" : formatNumber(run.outputTokens)}
+                  value={
+                    run.outputTokens == null ? (
+                      "—"
+                    ) : (
+                      <>
+                        {formatNumber(run.outputTokens)}
+                        {(run.thinkingTokens ?? 0) > 0 && (
+                          <span className="block text-xs font-normal text-muted-foreground">
+                            incl. {formatNumber(run.thinkingTokens!)} thinking
+                          </span>
+                        )}
+                      </>
+                    )
+                  }
                 />
                 <Metric
                   label="Cost"

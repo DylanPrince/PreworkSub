@@ -13,6 +13,8 @@ import { db } from "@/lib/server";
 import { requireUser } from "@/lib/session";
 import { relativeTime } from "@/lib/utils";
 
+const EFFORT_LABEL = { low: "Low", medium: "Medium", high: "High" } as const;
+
 export default async function AgentPage({ params }: { params: Promise<{ id: string }> }) {
   const user = await requireUser();
   const { id } = await params;
@@ -72,6 +74,10 @@ export default async function AgentPage({ params }: { params: Promise<{ id: stri
                   value={agent.business?.name ?? "Shared (all workspaces)"}
                 />
                 <Field label="Max output tokens" value={current.maxOutputTokens.toLocaleString()} />
+                <Field
+                  label="Effort"
+                  value={current.effort ? EFFORT_LABEL[current.effort] : "Model default"}
+                />
                 <Field label="Budget per run" value={formatUsd(Number(current.budgetUsdPerRun))} />
                 <Field label="Timeout" value={formatDuration(current.timeoutMs)} />
                 <Field label="Max attempts" value={current.maxAttempts} />

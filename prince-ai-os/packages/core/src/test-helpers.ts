@@ -1,5 +1,10 @@
 /** Test doubles shared by the integration suites. Not exported from the package. */
-import { ProviderError, type AIProvider, type TokenUsage } from "@prince/ai";
+import {
+  ProviderError,
+  type AIProvider,
+  type StructuredCompletionRequest,
+  type TokenUsage,
+} from "@prince/ai";
 import type { RunQueue } from "./run-queue";
 
 export class MemoryQueue implements RunQueue {
@@ -27,6 +32,8 @@ export const DEFAULT_USAGE: TokenUsage = {
 export class ScriptedProvider implements AIProvider {
   readonly name = "anthropic" as const;
   calls = 0;
+  /** Requests received, without the schema, for asserting what would have been sent. */
+  requests: Omit<StructuredCompletionRequest<unknown>, "outputSchema" | "signal">[] = [];
   constructor(
     private readonly behaviour: {
       output?: unknown;
@@ -38,8 +45,10 @@ export class ScriptedProvider implements AIProvider {
   isConfigured() {
     return true;
   }
-  async completeStructured<T>(req: { signal?: AbortSignal }) {
+  async completeStructured<T>(req: StructuredCompletionRequest<T>) {
     this.calls += 1;
+    const { outputSchema: _s, signal: _a, ...rest } = req;
+    this.requests.push(rest);
     if (this.behaviour.delayMs) {
       await new Promise<void>((resolve, reject) => {
         const t = setTimeout(resolve, this.behaviour.delayMs);

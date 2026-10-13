@@ -7,8 +7,10 @@ import {
   ValidationError,
   cancelRun,
   createBusiness,
+  createCommand,
   createCustomAgent,
   createTask,
+  dispatchWorkstreams,
   duplicateAgent,
   restoreAgentVersion,
   setAgentStatus,
@@ -18,6 +20,8 @@ import {
   requestRun,
   retryRun,
   type AgentConfigInput,
+  type CreateCommandInput,
+  type DispatchInput,
   type CreateAgentInput,
   type CreateBusinessInput,
   type CreateTaskInput,
@@ -207,5 +211,33 @@ export async function testAgentAction(
     revalidatePath(`/agent-builder/${agentId}`);
     revalidatePath("/tasks");
     return { taskId: task.id };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// AI Command Center
+// ---------------------------------------------------------------------------
+
+export async function createCommandAction(
+  input: CreateCommandInput,
+): Promise<ActionResult<{ commandId: string }>> {
+  const user = await requireUser();
+  return run(async () => {
+    const c = await createCommand(db, getRunQueue(), user.id, input);
+    revalidatePath("/command");
+    return { commandId: c.id };
+  });
+}
+
+export async function dispatchWorkstreamsAction(
+  commandId: string,
+  input: DispatchInput,
+): Promise<ActionResult<{ dispatched: number }>> {
+  const user = await requireUser();
+  return run(async () => {
+    const r = await dispatchWorkstreams(db, getRunQueue(), user.id, commandId, input);
+    revalidatePath(`/command/${commandId}`);
+    revalidatePath("/tasks");
+    return { dispatched: r.tasks.length };
   });
 }

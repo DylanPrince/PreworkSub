@@ -21,13 +21,18 @@
 - **AI spend controls**: per-run worst-case budget check; global daily and monthly limits checked at
   request time and enforced atomically in the worker with worst-case reservations (safe under
   concurrency); refusal to run models without a price entry; Agent Builder rejects per-run budgets above
-  the daily limit. These are app safeguards; a Console spend limit is the hard cap
-  (`docs/api-key-setup.md`).
+  the daily limit; Command Center refuses a paid batch whose combined worst case exceeds what remains;
+  prompts estimated above 80k tokens are refused before any call. These are app safeguards; a Console
+  spend limit is the hard cap (`docs/api-key-setup.md`).
+- **Command Center**: plans never run their workstreams automatically. The owner (or a member)
+  reviews and dispatches each one; workstreams the plan flags for owner approval are labelled. Viewers
+  can read commands but not dispatch; other businesses' commands are invisible.
 - **Agent Builder authorization**: only business admins/owners create or change agents; built-in
   agents are read-only; edits create immutable versions with an optimistic-concurrency guard; every
   change is audited. Agents get a fixed `read:business` permission and no tools.
 - **Audit log**: append-only `audit_events` for business creation, task creation, run requests,
-  cancellations, completions/failures, integration tests, and agent create/update/restore/status.
+  cancellations, completions/failures, integration tests, agent create/update/restore/status, and
+  command creation and dispatch.
 - **Headers**: `X-Frame-Options: DENY`, `nosniff`, strict referrer policy, restrictive permissions policy.
 - **Mock provider** (dry runs) refused when `APP_ENV=production`, at request time and in the worker.
 

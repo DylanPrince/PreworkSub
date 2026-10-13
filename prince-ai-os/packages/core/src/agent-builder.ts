@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { PrismaClient } from "@prince/database";
-import type { ProviderName } from "@prince/ai";
+import { REASONING_EFFORTS, type ProviderName } from "@prince/ai";
 import { DIVISIONS, getTemplate, isOutputSchemaKey } from "@prince/agents";
 import { requireBusinessRole } from "./access";
 import { recordAudit } from "./audit";
@@ -45,6 +45,12 @@ export const agentConfigInput = z.object({
     .min(10, "At least 10 seconds")
     .max(600, "At most 600 seconds"),
   maxAttempts: z.coerce.number().int().min(1, "At least 1").max(5, "At most 5"),
+  /** Empty means the model's default effort. */
+  effort: z
+    .enum(REASONING_EFFORTS, { message: "Choose an effort level" })
+    .or(z.literal("").transform(() => null))
+    .nullish()
+    .transform((v) => v ?? null),
   changeNote: z.string().trim().max(300).default(""),
 });
 export type AgentConfigInput = z.input<typeof agentConfigInput>;
@@ -83,6 +89,7 @@ function versionData(input: z.output<typeof agentConfigInput>) {
     systemPrompt: input.instructions,
     outputSchemaKey: input.outputSchemaKey,
     maxOutputTokens: input.maxOutputTokens,
+    effort: input.effort,
     budgetUsdPerRun: input.budgetUsdPerRun,
     timeoutMs: input.timeoutSeconds * 1000,
     maxAttempts: input.maxAttempts,
@@ -317,6 +324,7 @@ export async function duplicateAgent(
       budgetUsdPerRun: Number(version.budgetUsdPerRun),
       timeoutSeconds: Math.round(version.timeoutMs / 1000),
       maxAttempts: version.maxAttempts,
+      effort: version.effort,
       changeNote: `Duplicated from ${source.name} v${version.version}`,
     },
     {
