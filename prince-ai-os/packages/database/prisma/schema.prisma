@@ -94,23 +94,29 @@ enum MembershipRole {
 }
 
 model Business {
-  id            String            @id @default(cuid())
-  name          String
-  slug          String            @unique
-  description   String            @default("")
-  businessModel String            @default("")
-  goals         String[]          @default([])
-  archivedAt    DateTime?
-  createdAt     DateTime          @default(now())
-  updatedAt     DateTime          @updatedAt
-  memberships   Membership[]
-  agents        Agent[]
-  tasks         Task[]
-  runs          AgentRun[]
-  commands      Command[]
-  approvals     ApprovalRequest[]
-  workflows     Workflow[]
-  workflowRuns  WorkflowRun[]
+  id             String            @id @default(cuid())
+  name           String
+  slug           String            @unique
+  description    String            @default("")
+  businessModel  String            @default("")
+  goals          String[]          @default([])
+  archivedAt     DateTime?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+  memberships    Membership[]
+  agents         Agent[]
+  tasks          Task[]
+  runs           AgentRun[]
+  commands       Command[]
+  approvals      ApprovalRequest[]
+  workflows      Workflow[]
+  workflowRuns   WorkflowRun[]
+  financeEntries FinanceEntry[]
+  suppliers      Supplier[]
+  products       Product[]
+  contentItems   ContentItem[]
+  campaigns      Campaign[]
+  saasProjects   SaasProject[]
 }
 
 model Membership {
@@ -239,6 +245,9 @@ model Task {
   /// Set when the task is a step of a workflow run.
   workflowRunId String?
   workflowStep  String?
+  /// Module record this task works on (e.g. "product", "content_item", "campaign").
+  subjectType   String?
+  subjectId     String?
   createdById   String
   createdAt     DateTime     @default(now())
   updatedAt     DateTime     @updatedAt
@@ -254,6 +263,7 @@ model Task {
   /// A workflow step runs at most once per workflow run (no loops).
   @@unique([workflowRunId, workflowStep])
   @@index([businessId, createdAt])
+  @@index([subjectType, subjectId])
 }
 
 /// A request made in the AI Command Center: a planning task, then owner-approved dispatch of the
@@ -507,4 +517,228 @@ model WorkflowRun {
 
   @@index([businessId, createdAt])
   @@index([workflowId, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Business modules. Records are entered by people (or imported later); every figure keeps its
+// source so nothing estimated or entered is shown as measured. createdById is the user's id.
+// ---------------------------------------------------------------------------
+
+enum RecordSource {
+  user_entered
+  imported
+  estimated
+}
+
+enum FinanceKind {
+  revenue
+  refund
+  cogs
+  operating_expense
+  ad_spend
+  subscription
+  other_income
+  other_expense
+}
+
+model FinanceEntry {
+  id          String       @id @default(cuid())
+  businessId  String
+  kind        FinanceKind
+  /// Always positive; the kind decides whether it adds or subtracts.
+  amountUsd   Decimal      @db.Decimal(14, 2)
+  occurredOn  DateTime     @db.Date
+  description String
+  source      RecordSource @default(user_entered)
+  createdById String
+  voidedAt    DateTime?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  business    Business     @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@index([businessId, occurredOn])
+}
+
+model Supplier {
+  id           String    @id @default(cuid())
+  businessId   String
+  name         String
+  website      String    @default("")
+  contact      String    @default("")
+  leadTimeDays Int?
+  minimumOrder Int?
+  notes        String    @default("")
+  archivedAt   DateTime?
+  createdById  String
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  business     Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  products     Product[]
+
+  @@index([businessId])
+}
+
+enum ProductStage {
+  idea
+  researching
+  sourcing
+  ready
+  listed
+  retired
+}
+
+model Product {
+  id              String       @id @default(cuid())
+  businessId      String
+  name            String
+  description     String       @default("")
+  stage           ProductStage @default(idea)
+  supplierId      String?
+  priceUsd        Decimal?     @db.Decimal(12, 2)
+  unitCostUsd     Decimal?     @db.Decimal(12, 2)
+  shippingCostUsd Decimal?     @db.Decimal(12, 2)
+  /// Marketplace or payment fee as a percentage of price.
+  feePercent      Decimal?     @db.Decimal(5, 2)
+  feeFixedUsd     Decimal?     @db.Decimal(12, 2)
+  source          RecordSource @default(user_entered)
+  notes           String       @default("")
+  archivedAt      DateTime?
+  createdById     String
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  business        Business     @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  supplier        Supplier?    @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+
+  @@index([businessId, stage])
+}
+
+enum ContentFormat {
+  blog
+  short_video
+  long_video
+  social_post
+  email
+  ad
+  other
+}
+
+enum ContentStage {
+  idea
+  drafting
+  review
+  approved
+  published
+}
+
+model ContentItem {
+  id           String        @id @default(cuid())
+  businessId   String
+  title        String
+  format       ContentFormat
+  channel      String        @default("")
+  stage        ContentStage  @default(idea)
+  brief        String        @default("")
+  body         String        @default("")
+  /// Planned publication date; set when publication is approved.
+  scheduledFor DateTime?
+  /// Recorded by a person after publishing outside Prince AI OS (no publishing integration).
+  publishedAt  DateTime?
+  publishedUrl String        @default("")
+  archivedAt   DateTime?
+  createdById  String
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  business     Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@index([businessId, stage])
+  @@index([scheduledFor])
+}
+
+enum CampaignStatus {
+  planning
+  approved
+  ended
+}
+
+model Campaign {
+  id          String         @id @default(cuid())
+  businessId  String
+  name        String
+  objective   String
+  audience    String         @default("")
+  channels    String[]       @default([])
+  /// Planned budget. Advisory: nothing is spent by Prince AI OS.
+  budgetUsd   Decimal?       @db.Decimal(12, 2)
+  startsOn    DateTime?      @db.Date
+  endsOn      DateTime?      @db.Date
+  status      CampaignStatus @default(planning)
+  notes       String         @default("")
+  archivedAt  DateTime?
+  createdById String
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  business    Business       @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@index([businessId, status])
+}
+
+enum SaasStage {
+  idea
+  specification
+  building
+  testing
+  launched
+  paused
+}
+
+model SaasProject {
+  id            String        @id @default(cuid())
+  businessId    String
+  name          String
+  summary       String        @default("")
+  stage         SaasStage     @default(idea)
+  repositoryUrl String        @default("")
+  requirements  String        @default("")
+  archivedAt    DateTime?
+  createdById   String
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  business      Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  items         BacklogItem[]
+
+  @@index([businessId])
+}
+
+enum BacklogType {
+  feature
+  bug
+  chore
+}
+
+enum BacklogStatus {
+  todo
+  in_progress
+  done
+}
+
+enum Priority {
+  low
+  medium
+  high
+}
+
+model BacklogItem {
+  id          String        @id @default(cuid())
+  projectId   String
+  title       String
+  details     String        @default("")
+  type        BacklogType   @default(feature)
+  status      BacklogStatus @default(todo)
+  priority    Priority      @default(medium)
+  createdById String
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  project     SaasProject   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, status])
 }

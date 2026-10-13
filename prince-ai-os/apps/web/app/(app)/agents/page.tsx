@@ -41,7 +41,7 @@ export default async function AgentsPage() {
             >
               {division} division
             </h2>
-            <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {live.map((a) => (
                 <li key={a.id}>
                   <Link href={`/agents/${a.id}`} className="block h-full">

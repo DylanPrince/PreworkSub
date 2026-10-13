@@ -18,7 +18,7 @@ export interface ApprovalRequestInput {
   summary: string;
   /** Why the action needs a human decision. */
   reason: string;
-  payload: Record<string, Prisma.InputJsonValue>;
+  payload: Prisma.InputJsonObject;
   estimatedCostUsd?: number | null;
   requestedBy: { type: ActorType; id: string | null };
   target?: { type: string; id: string };

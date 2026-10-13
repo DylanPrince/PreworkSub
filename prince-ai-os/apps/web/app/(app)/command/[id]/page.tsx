@@ -131,7 +131,7 @@ export default async function CommandPage({ params }: { params: Promise<{ id: st
                 </p>
               )}
               <p className="text-sm">{plan.summary}</p>
-              <div className="grid gap-4 sm:grid-cols-2">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div>
                   <h3 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
                     Risks

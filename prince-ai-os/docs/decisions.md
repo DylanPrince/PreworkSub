@@ -110,3 +110,15 @@ approvals. Steps that need approval use the approval system (D14) with the actio
 `workflow.run_step`; the step starts only from that handler. Paid runs are refused up front if the
 worst case of all steps exceeds what remains under the limits, but each step is still reserved by the
 worker before its call.
+
+### D16 — Business modules are records first; approvals bind what was approved
+
+The modules store what people enter, with its source, and compute only from it, showing the formulas;
+nothing is estimated on their behalf and untracked values say so. They connect to nothing external
+yet, so approving content or a campaign records a go-ahead rather than performing it: a person
+publishes or launches and records the outcome. The approval is bound to what was approved (a hash of
+the text; the budget, dates and channels), because an approval that survives later edits would let a
+different text or a bigger budget go out under it. Agents work on records through ordinary tasks that
+carry the record as data, rather than a separate agent API, so spending limits, reservations and
+audit apply without special cases. The owner chose to keep four executable agents and build these
+modules instead of the remaining 16 roster agents; Agent Builder covers specialised needs.

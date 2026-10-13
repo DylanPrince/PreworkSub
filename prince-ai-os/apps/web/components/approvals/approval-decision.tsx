@@ -18,10 +18,13 @@ export function ApprovalDecision({
   approvalId,
   canDecide,
   canCancel,
+  approveLabel = "Approve and run",
 }: {
   approvalId: string;
   canDecide: boolean;
   canCancel: boolean;
+  /** "Approve and run" when approval starts work; "Approve" when it only records a go-ahead. */
+  approveLabel?: string;
 }) {
   const router = useRouter();
   const hydrated = useHydrated();
@@ -73,7 +76,7 @@ export function ApprovalDecision({
         {canDecide && (
           <>
             <Button disabled={!hydrated || pending} onClick={() => decide("approve")}>
-              <Check /> Approve and run
+              <Check /> {approveLabel}
             </Button>
             <Button
               variant="danger"

@@ -66,7 +66,7 @@ export default async function ManageAgentPage({ params }: { params: Promise<{ id
           This agent is {agent.status}. It cannot be assigned tasks or run until you enable it.
         </p>
       )}
-      <div className="grid gap-6 xl:grid-cols-3">
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
         <Card className="xl:col-span-2">
           <CardHeader>
             <div>

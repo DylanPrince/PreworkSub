@@ -62,7 +62,7 @@ export function TaskForm({
 
   return (
     <form onSubmit={onSubmit} className="flex max-w-2xl flex-col gap-4" method="post" noValidate>
-      <div className="grid gap-4 sm:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="businessId">Business</Label>
           <Select

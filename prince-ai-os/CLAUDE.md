@@ -8,7 +8,8 @@ application-managed AI agents, while the owner keeps control of money, publishin
 - `apps/web` — Next.js 16 App Router UI, Better Auth, server actions, `/api/v1/*` route handlers.
 - `apps/worker` — BullMQ worker that executes agent runs (`executeRun`).
 - `packages/core` — service layer (access control, businesses, tasks, runs, executor, budgets, estimates,
-  Agent Builder, Command Center, approvals, workflows, metrics, audit).
+  Agent Builder, Command Center, approvals, workflows, business modules in `src/modules/`, metrics,
+  audit).
 - `packages/ai` — provider abstraction, Anthropic SDK provider, mock provider, price table.
 - `packages/agents` — agent registry, output schemas and contracts (mock output + evaluation), prompt assembly.
 - `packages/database` — Prisma 7 schema, migrations, seed. `packages/shared` — env, queue contracts.
@@ -38,6 +39,8 @@ Never run `prisma migrate reset` or anything that wipes a database without the o
 - Mutations write an `audit_events` row. Never put secrets or prompt contents in logs or audit metadata.
 - Metrics must not be fabricated: untracked values render "Not tracked yet"; demo/estimated data is labelled.
 - Planned features get an honest `PlannedPage`, never sample data.
+- Module records carry their source (`RecordSource`); calculations show their formulas; approvals of
+  content or campaigns are bound to the exact text or terms (see `docs/decisions.md` D16).
 - New executable agent = registry template + instructions + output contract (`packages/agents/src/contracts.ts`:
   schema, `mockOutput`, `evaluate`) + tests. Owners can also build agents in the UI (Agent Builder).
 - Paid Claude calls only through `executeRun`, which reserves worst-case cost first. Never add a code

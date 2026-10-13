@@ -64,4 +64,12 @@ customer-facing commitments, destructive operations, production deployments, cre
 legal submissions (the `ApprovalCategory` values). Enforced in `@prince/core`: the action exists only
 as an approval handler, recorded in the audit log, with expiry. A rejected action is keyed by its
 fingerprint so another user or agent cannot re-request it unchanged. Implemented now for flagged
-Command Center workstreams; future external tools will register handlers the same way.
+Command Center workstreams, workflow steps marked for approval, content publication and campaign
+launch. Content and campaign approvals are bound to the exact text or the exact budget, dates and
+channels, so an edit after approval cannot ride on it. Future external tools will register handlers
+the same way.
+
+Module records are business data written by people. When an agent is asked about one, the record is
+wrapped as data in the task (never as instructions), and only users with the member role or above can
+ask. Links people enter (supplier sites, published URLs, repositories) must be http(s) and open with
+`rel="noopener noreferrer nofollow"`.

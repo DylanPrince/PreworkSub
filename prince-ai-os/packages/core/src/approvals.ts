@@ -7,6 +7,8 @@ import { DISPATCH_WORKSTREAM_ACTION, executeApprovedDispatch } from "./commands"
 import { ForbiddenError, NotFoundError, ValidationError } from "./errors";
 import type { RunQueue } from "./run-queue";
 import { runPolicyFromEnv, type RunPolicy } from "./tasks";
+import { APPROVE_CONTENT_ACTION, executeApprovedContent } from "./modules/content";
+import { APPROVE_CAMPAIGN_ACTION, executeApprovedCampaign } from "./modules/marketing";
 import {
   executeApprovedWorkflowStep,
   RUN_WORKFLOW_STEP_ACTION,
@@ -46,6 +48,14 @@ export const APPROVAL_HANDLERS: Record<string, ApprovalActionHandler> = {
     label: "Run a workflow step",
     execute: ({ db, queue, approverId, request, policy }) =>
       executeApprovedWorkflowStep(db, queue, approverId, request, policy),
+  },
+  [APPROVE_CONTENT_ACTION]: {
+    label: "Approve content for publication",
+    execute: ({ db, approverId, request }) => executeApprovedContent(db, approverId, request),
+  },
+  [APPROVE_CAMPAIGN_ACTION]: {
+    label: "Approve a campaign launch",
+    execute: ({ db, approverId, request }) => executeApprovedCampaign(db, approverId, request),
   },
 };
 

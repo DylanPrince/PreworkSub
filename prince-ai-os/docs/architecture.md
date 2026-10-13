@@ -122,6 +122,30 @@ workstream])`), then each run is requested through `requestRun`, so the worker's
    `/workflows/:id` (steps, worst case, start a run, recent runs), `/workflows/runs/:id` (live step
    progress via `/api/v1/workflow-runs/:id`, cancel).
 
+## Business modules
+
+1. **Records** (`packages/core/src/modules/*`): finance entries, products and suppliers, content
+   items, campaigns, and software projects with backlog items. Each belongs to a business; members
+   create and edit, viewers read; every change is audited. Money is stored as decimals, dates as UTC
+   days, and every figure people enter carries its source (`RecordSource`: entered or estimated).
+   Records are archived or voided, not deleted.
+2. **Calculations** are plain functions over the stored figures (`financeSummary`,
+   `productEconomics`) and return the formulas they used, which the pages show. Missing figures are
+   reported as missing; nothing is filled in.
+3. **Approvals** (`content.approve_publication`, `marketing.approve_launch`) bind what is approved:
+   a hash of the content's text, or the campaign's budget, dates and channels. Editing those withdraws
+   a pending request and returns an approved record to drafting or planning; the handler re-checks
+   them and fails the approval if they changed. Approval only changes the record's state: no handler
+   posts, launches or spends, because nothing external is connected.
+4. **Ask an agent** (`askAgentAboutRecord`): the record is described as text and attached as data to
+   an ordinary task (`Task.subjectType`/`subjectId`), so runs, limits, reservations and audit are
+   unchanged and the record's page lists the work done on it.
+5. **Views** (`insight.ts`): Research Lab (runs that produced research briefs), Analytics and Calendar
+   are read-only queries over existing records.
+6. **UI**: `/finance`, `/ecommerce` (+ `/ecommerce/products/:id`), `/content` (+ `/content/:id`),
+   `/marketing` (+ `/marketing/:id`), `/saas` (+ `/saas/:id`), `/research`, `/analytics`, `/calendar`.
+   Forms post plain values to server actions (`lib/module-actions.ts`); validation happens in core.
+
 ## Two kinds of "agent"
 
 - **Claude Code development subagents** (`.claude/agents/*.md`) help _build_ this repository. They run

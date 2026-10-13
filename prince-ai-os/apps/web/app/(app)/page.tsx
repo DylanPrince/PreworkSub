@@ -13,7 +13,7 @@ import {
 import Link from "next/link";
 import { Suspense } from "react";
 import { getAiStatus, getOverview, listBusinesses, runPolicyFromEnv } from "@prince/core";
-import { formatDuration, formatNumber, formatUsd } from "@prince/shared";
+import { formatDuration, formatMoney, formatNumber, formatUsd } from "@prince/shared";
 import { EmptyState } from "@/components/common/empty-state";
 import { PageHeader } from "@/components/common/page-header";
 import { Stat } from "@/components/common/stat";
@@ -133,7 +133,10 @@ export default async function OverviewPage({
         </ul>
       )}
 
-      <section aria-label="Operations" className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <section
+        aria-label="Operations"
+        className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4"
+      >
         <Stat
           label="Active businesses"
           value={formatNumber(o.counts.businesses)}
@@ -168,7 +171,7 @@ export default async function OverviewPage({
           label="Scheduled tasks"
           value={o.counts.scheduledTasks}
           source="not_tracked"
-          hint="Scheduling ships in Milestone 4"
+          hint="Recurring schedules are not built yet"
           icon={<Clock className="size-3.5" />}
         />
         <Stat
@@ -184,7 +187,7 @@ export default async function OverviewPage({
 
       <section
         aria-label="AI spend and finance"
-        className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"
+        className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4"
       >
         <Stat
           label={`AI operating cost (${o.days}d)`}
@@ -198,20 +201,28 @@ export default async function OverviewPage({
           hint={`${formatNumber(o.ai.tokensIn)} input · ${formatNumber(o.ai.tokensOut)} output tokens${o.ai.mockRuns ? ` · ${o.ai.mockRuns} mock run(s)` : ""}`}
         />
         <Stat
-          label="Revenue"
-          value={null}
-          source="not_tracked"
-          hint="Finance module (Milestone 5). No revenue is estimated."
+          label={`Net revenue (${o.days}d)`}
+          value={o.finance.hasRevenue ? formatMoney(o.finance.netRevenue) : null}
+          source={o.finance.hasRevenue ? "user_entered" : "not_tracked"}
+          hint={
+            o.finance.hasRevenue
+              ? "From finance entries people record"
+              : "Record revenue on the Finance page. Nothing is estimated."
+          }
         />
         <Stat
-          label="Net profit"
-          value={null}
-          source="not_tracked"
-          hint="Requires revenue and expense records"
+          label={`Net profit (${o.days}d)`}
+          value={o.finance.hasRevenue ? formatMoney(o.finance.netProfit) : null}
+          source={o.finance.hasRevenue ? "user_entered" : "not_tracked"}
+          hint={
+            o.finance.hasRevenue
+              ? "Net revenue − costs, including measured AI cost"
+              : "Needs revenue entries"
+          }
         />
       </section>
 
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Card>
           <CardHeader>
             <div>
@@ -274,7 +285,7 @@ export default async function OverviewPage({
         </Card>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <RunList title="Recently completed" empty="No completed runs yet" runs={o.recentRuns} />
         <RunList title="Failed jobs" empty="No failed runs" runs={o.recentFailures} showError />
         <Card>

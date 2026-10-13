@@ -4,6 +4,57 @@ Status legend: **Done and tested** means covered by automated tests that pass in
 browser. **Built, not yet verified live** means implemented and tested against fakes, but not yet
 exercised against the real external service.
 
+## 2026-10-13 — Session 3 (continued): business modules
+
+The owner asked to skip the 16 remaining roster agents for now; the four executable agents plus
+Agent Builder cover the modules below.
+
+**Done and tested**
+
+- Finance (`/finance`): revenue, refunds, cost of goods, operating expenses, ad spend,
+  subscriptions and other income/expenses recorded per business with their source (actual or
+  estimate). Profit and loss for 7, 30, 90 or 365 days with the formulas shown, measured AI cost
+  included automatically, alerts for negative gross or net profit and for ad spend above half of
+  net revenue. Revenue and profit show "Not tracked yet" until revenue is recorded, never zero.
+  Entries are voided (kept, no longer counted), not deleted. The overview now shows net revenue and
+  net profit from these entries.
+- E-commerce (`/ecommerce`): products (stage, supplier, price, unit cost, shipping, percentage and
+  fixed fees, source) and suppliers (lead time, minimum order, contact). Unit economics with every
+  formula spelled out: fees, landed cost, profit per unit, margin and break-even ROAS; missing figures
+  are reported as missing. No store or supplier account is connected.
+- Content Studio (`/content`): idea → drafting → review pipeline. Approval to publish goes through the
+  approval system and binds the exact text: editing it withdraws a pending request or returns an
+  approved item to drafting, and a changed text makes an approval fail. A person publishes it and
+  records the link; published items are frozen.
+- Marketing (`/marketing`): campaign plans (objective, audience, channels, budget, dates). Launch
+  approval binds the budget, dates and channels (category "spend" when the budget is above zero);
+  changing any of them cancels it. Nothing is launched or spent, and performance shows "Not tracked
+  yet" until an ad platform is connected.
+- SaaS Projects (`/saas`): requirements and a backlog (feature, bug or chore; priority; to do, in
+  progress, done). The repository link is stored only.
+- "Ask an agent" on products, content, campaigns, software projects and a business's finances: the
+  record's current details are attached as data to an ordinary task (same budgets, reservations,
+  approvals and audit), and the record lists the agent work done on it.
+- Research Lab (`/research`) lists research briefs with the claims that need checking; Analytics
+  (`/analytics`) shows agent utilization, workflow success, figures by business, six months of
+  profit and loss and the pipelines; Calendar (`/calendar`) shows publication dates, campaign dates,
+  approval deadlines and workflow runs by month. Every sidebar page is now live.
+- Members create and edit records, viewers read, and every change is audited.
+
+**Tests run (all passing)**
+
+- `pnpm typecheck`, `pnpm lint`, `pnpm format:check` clean.
+- `pnpm test`: 141 tests. New (14): profit and loss with voids, validation and roles, alerts; unit
+  economics; content approval, withdrawal on edit, rejection block, frozen published items, and a
+  changed text failing its approval; campaign approval categories, re-approval after a budget change
+  and changed terms failing; calendar; backlog; asking an agent about records (with role checks);
+  analytics and research views.
+- `pnpm test:e2e`: 8 Playwright tests; new: record finances and void an entry, price a product and
+  dry-run an agent on it, approve and publish content, approve a campaign launch, build a backlog,
+  then see the dates on the calendar and the runs in analytics.
+- Manual browser check of every module page in dark, light and mobile. Fixed: pages could scroll
+  sideways on phones when a table or long line was wider than the screen (overview included).
+
 ## 2026-10-13 — Session 3 (continued): workflow automation
 
 **Done and tested**

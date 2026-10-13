@@ -11,6 +11,27 @@ const TONES = {
   active: "success",
   disabled: "neutral",
   archived: "neutral",
+  // Business module stages.
+  planning: "neutral",
+  approved: "success",
+  ended: "neutral",
+  idea: "neutral",
+  drafting: "info",
+  review: "warning",
+  published: "success",
+  researching: "info",
+  sourcing: "info",
+  ready: "primary",
+  listed: "success",
+  retired: "neutral",
+  specification: "info",
+  building: "primary",
+  testing: "info",
+  launched: "success",
+  paused: "warning",
+  todo: "neutral",
+  in_progress: "primary",
+  done: "success",
 } as const;
 
 export function StatusBadge({ status }: { status: string }) {

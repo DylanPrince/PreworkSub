@@ -2,6 +2,7 @@ import type { PrismaClient } from "@prince/database";
 import { accessibleBusinessIds } from "./access";
 import { countPendingApprovals } from "./approvals";
 import { startOfUtcDay, startOfUtcMonth, spendSince } from "./budget";
+import { financeSummary } from "./modules/finance";
 
 export interface OverviewFilters {
   businessId?: string;
@@ -111,10 +112,14 @@ export async function getOverview(db: PrismaClient, userId: string, filters: Ove
       ? latencies[Math.min(latencies.length - 1, Math.floor((p / 100) * latencies.length))]!
       : null;
 
-  const [spendToday, spendMonth, pendingApprovals] = await Promise.all([
+  const [spendToday, spendMonth, pendingApprovals, finance] = await Promise.all([
     spendSince(db, startOfUtcDay()),
     spendSince(db, startOfUtcMonth()),
     countPendingApprovals(db, businessIds),
+    financeSummary(db, businessIds, {
+      from: since,
+      to: new Date(startOfUtcDay().getTime() + 86_400_000),
+    }),
   ]);
 
   return {
@@ -127,7 +132,7 @@ export async function getOverview(db: PrismaClient, userId: string, filters: Ove
       failedRuns,
       succeededRuns,
       pendingApprovals,
-      // Scheduled jobs arrive with workflows; reported as null (not tracked) rather than 0.
+      // Workflows start by hand; schedules are not built, so this stays null (not tracked).
       scheduledTasks: null as number | null,
     },
     ai: {
@@ -141,6 +146,7 @@ export async function getOverview(db: PrismaClient, userId: string, filters: Ove
       mockRuns,
       totalRuns: runsInWindow.length,
     },
+    finance,
     series,
     costByAgent: [...costByAgent.entries()]
       .map(([agent, costUsd]) => ({ agent, costUsd }))

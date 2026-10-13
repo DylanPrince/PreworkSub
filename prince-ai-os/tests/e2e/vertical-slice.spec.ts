@@ -283,6 +283,125 @@ test.describe.serial("first vertical slice", () => {
     await expect(page.getByText(/Result of the earlier step "Market research"/)).toBeVisible();
   });
 
+  test("owner runs the business modules, with approval before publishing or spending", async ({
+    page,
+  }) => {
+    await signIn(page);
+    page.on("dialog", (d) => d.accept());
+    const nav = page.getByRole("navigation", { name: "Main" });
+    const today = new Date().toISOString().slice(0, 10);
+
+    // Finance: revenue is "not tracked" until recorded; profit follows the entries.
+    await nav.getByRole("link", { name: "Finance" }).click();
+    await expect(page.getByRole("heading", { name: "Finance", level: 1 })).toBeVisible();
+    await expect(page.getByText("Not tracked yet").first()).toBeVisible();
+    const fin = page.getByRole("form", { name: "New finance entry" });
+    await fin.getByRole("button", { name: "Add entry" }).click();
+    await expect(fin.getByText("Enter an amount above zero")).toBeVisible();
+    for (const [kind, amount, description] of [
+      ["Revenue", "1200", "October sales"],
+      ["Cost of goods sold", "400", "Inventory restock"],
+      ["Ad spend", "150", "Meta ads week 41"],
+    ]) {
+      await fin.getByLabel("Type").selectOption({ label: kind! });
+      await fin.getByLabel("Amount (USD)").fill(amount!);
+      await fin.getByLabel("Description").fill(description!);
+      await fin.getByRole("button", { name: "Add entry" }).click();
+      await expect(page.getByRole("cell", { name: new RegExp(`^${description}`) })).toBeVisible();
+    }
+    const netProfit = page.getByRole("row", { name: /Net profit/ });
+    await expect(netProfit).toContainText("$650.00");
+    await page.getByRole("button", { name: "Void Meta ads week 41" }).click();
+    await expect(page.getByText("Voided")).toBeVisible();
+    await expect(netProfit).toContainText("$800.00");
+
+    // E-commerce: unit economics with the formulas shown, and an agent asked about the product.
+    await nav.getByRole("link", { name: "E-commerce" }).click();
+    const product = page.getByRole("form", { name: "New product" });
+    await product.getByLabel("Product name").fill("Trail Bottle");
+    await product.getByLabel("Selling price").fill("40");
+    await product.getByLabel("Unit cost").fill("12");
+    await product.getByLabel("Shipping per unit").fill("5");
+    await product.getByLabel("Payment/platform fee (%)").fill("3");
+    await product.getByLabel("Fixed fee per order").fill("0.30");
+    await product.getByRole("button", { name: "Add product" }).click();
+    await expect(page.getByRole("heading", { name: "Trail Bottle", level: 1 })).toBeVisible();
+    const economics = page.getByRole("region", { name: "Unit economics" });
+    await expect(economics.getByText("$21.50")).toBeVisible();
+    await expect(page.getByText("Fees = 40.00 × 3.00% + 0.30 = 1.50")).toBeVisible();
+    await page.getByRole("button", { name: "Dry run (mock)" }).click();
+    await expect(page).toHaveURL(/\/tasks\//);
+    await expect(page.getByText("succeeded", { exact: true }).first()).toBeVisible({
+      timeout: 30_000,
+    });
+    await page.goBack();
+    await page.reload();
+    await expect(page.getByRole("link", { name: /\(Trail Bottle\)$/ })).toBeVisible();
+
+    // Content: review, approval of the exact text, then a person records publication.
+    await nav.getByRole("link", { name: "Content Studio" }).click();
+    const idea = page.getByRole("form", { name: "New content item" });
+    await idea.getByLabel("Title").fill("Autumn trail guide");
+    await idea.getByLabel("Channel").fill("Blog");
+    await idea.getByRole("button", { name: "Add idea" }).click();
+    await expect(page.getByRole("heading", { name: "Autumn trail guide", level: 1 })).toBeVisible();
+    const edit = page.getByRole("form", { name: "Edit content" });
+    await edit.getByLabel("Text to publish").fill("Autumn is the best time to hike.");
+    await edit.getByRole("button", { name: "Save changes" }).click();
+    await expect(edit.getByText("Saved.")).toBeVisible();
+    await page.getByRole("button", { name: "Review", exact: true }).click();
+    await page.getByLabel("Planned publication date (optional)").fill(today);
+    await page.getByRole("button", { name: "Request approval" }).click();
+    await page.getByRole("link", { name: "Open the approval request" }).click();
+    await expect(page.getByText(/Prince AI OS will not post it/)).toBeVisible();
+    await page.getByRole("button", { name: "Approve", exact: true }).click();
+    const decision = page.getByRole("region", { name: "Decision" });
+    await expect(decision.getByText("Approved · carried out").first()).toBeVisible();
+    await page.getByRole("link", { name: "Content item" }).click();
+    await expect(page.getByText(`Approved for publication on ${today}`)).toBeVisible();
+    await page.getByLabel("Link to the published item (optional)").fill("https://example.com/a");
+    await page.getByRole("button", { name: "Mark as published" }).click();
+    await expect(page.getByText(/Published items are kept as a record/)).toBeVisible();
+
+    // Marketing: launch approval covers the budget; nothing is launched or spent.
+    await nav.getByRole("link", { name: "Marketing" }).click();
+    const plan = page.getByRole("form", { name: "New campaign" });
+    await plan.getByLabel("Campaign name").fill("Autumn launch");
+    await plan.getByLabel("Objective").fill("Sell 200 Trail Bottles");
+    await plan.getByLabel("Channels").fill("Meta ads, Google search");
+    await plan.getByLabel("Planned budget (USD)").fill("300");
+    await plan.getByLabel("Start date").fill(today);
+    await plan.getByRole("button", { name: "Plan campaign" }).click();
+    await expect(page.getByRole("heading", { name: "Autumn launch", level: 1 })).toBeVisible();
+    await page.getByRole("button", { name: "Request launch approval" }).click();
+    await page.getByRole("link", { name: "Open the approval request" }).click();
+    await expect(page.getByText(/will not launch it or spend anything/)).toBeVisible();
+    await page.getByRole("button", { name: "Approve", exact: true }).click();
+    await expect(decision.getByText("Approved · carried out").first()).toBeVisible();
+    await page.getByRole("link", { name: "Campaign" }).click();
+    await expect(page.getByText(/Prince AI OS does not launch it or spend anything/)).toBeVisible();
+
+    // SaaS: a prioritised backlog.
+    await nav.getByRole("link", { name: "SaaS Projects" }).click();
+    const project = page.getByRole("form", { name: "New software project" });
+    await project.getByLabel("Project name").fill("Route planner");
+    await project.getByRole("button", { name: "Add project" }).click();
+    await expect(page.getByRole("heading", { name: "Route planner", level: 1 })).toBeVisible();
+    const backlog = page.getByRole("form", { name: "New backlog item" });
+    await backlog.getByLabel("Title").fill("Weather API integration");
+    await backlog.getByRole("button", { name: "Add to backlog" }).click();
+    await page.getByLabel("Status of Weather API integration").selectOption("in_progress");
+    await expect(page.getByRole("region", { name: "In progress" })).toBeVisible();
+
+    // Dated records reach the calendar; analytics count the pipelines.
+    await nav.getByRole("link", { name: "Calendar" }).click();
+    await expect(page.getByRole("link", { name: "Publish: Autumn trail guide" })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Campaign starts: Autumn launch" })).toBeVisible();
+    await nav.getByRole("link", { name: "Analytics" }).click();
+    await expect(page.getByRole("heading", { name: "Agent utilization" })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Market Research Agent" })).toBeVisible();
+  });
+
   test("every sidebar page renders in light and dark mode", async ({ page }) => {
     await signIn(page);
     const links = await page.getByRole("navigation", { name: "Main" }).getByRole("link").all();

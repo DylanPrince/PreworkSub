@@ -57,6 +57,8 @@ export async function createTask(
   userId: string,
   raw: CreateTaskInput,
   runOpts: Omit<RequestRunOptions, "idempotencyKey"> = {},
+  /** Module record the task is about (set by the service that checked access to it). */
+  subject?: { type: string; id: string },
 ) {
   const parsed = createTaskInput.safeParse(raw);
   if (!parsed.success)
@@ -82,6 +84,8 @@ export async function createTask(
         title: input.title,
         instructions: input.instructions,
         kind: input.kind,
+        subjectType: subject?.type ?? null,
+        subjectId: subject?.id ?? null,
         createdById: userId,
       },
     });

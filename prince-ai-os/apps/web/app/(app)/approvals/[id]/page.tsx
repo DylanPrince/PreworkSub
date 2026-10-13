@@ -1,6 +1,13 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { CATEGORY_LABELS, ForbiddenError, NotFoundError, getApproval } from "@prince/core";
+import {
+  APPROVE_CAMPAIGN_ACTION,
+  APPROVE_CONTENT_ACTION,
+  CATEGORY_LABELS,
+  ForbiddenError,
+  NotFoundError,
+  getApproval,
+} from "@prince/core";
 import { formatUsd } from "@prince/shared";
 import { ApprovalDecision } from "@/components/approvals/approval-decision";
 import { ApprovalStatusBadge } from "@/components/approvals/approval-status";
@@ -91,6 +98,14 @@ export default async function ApprovalPage({ params }: { params: Promise<{ id: s
                   >
                     Workflow run
                   </Link>
+                ) : r.targetType === "content_item" && r.targetId ? (
+                  <Link href={`/content/${r.targetId}`} className="text-primary hover:underline">
+                    Content item
+                  </Link>
+                ) : r.targetType === "campaign" && r.targetId ? (
+                  <Link href={`/marketing/${r.targetId}`} className="text-primary hover:underline">
+                    Campaign
+                  </Link>
                 ) : (
                   "—"
                 )
@@ -107,7 +122,16 @@ export default async function ApprovalPage({ params }: { params: Promise<{ id: s
         <CardContent className="space-y-3">
           {r.status === "pending" ? (
             canDecide || canCancel ? (
-              <ApprovalDecision approvalId={r.id} canDecide={canDecide} canCancel={canCancel} />
+              <ApprovalDecision
+                approvalId={r.id}
+                canDecide={canDecide}
+                canCancel={canCancel}
+                approveLabel={
+                  r.action === APPROVE_CONTENT_ACTION || r.action === APPROVE_CAMPAIGN_ACTION
+                    ? "Approve"
+                    : "Approve and run"
+                }
+              />
             ) : (
               <p className="text-sm text-muted-foreground">
                 Waiting for a business admin or owner to decide.

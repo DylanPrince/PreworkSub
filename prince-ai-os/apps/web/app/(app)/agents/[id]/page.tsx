@@ -53,7 +53,7 @@ export default async function AgentPage({ params }: { params: Promise<{ id: stri
           </>
         }
       />
-      <div className="grid gap-4 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <Card className="lg:col-span-2">
           <CardHeader>
             <CardTitle>Current configuration (v{agent.currentVersion})</CardTitle>

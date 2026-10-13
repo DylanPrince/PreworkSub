@@ -8,6 +8,16 @@ export function formatUsd(value: number, opts: { precise?: boolean } = {}): stri
   }).format(value);
 }
 
+/** Business money (prices, revenue, budgets): always two decimals, unlike AI cost figures. */
+export function formatMoney(value: number): string {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(value);
+}
+
 export function formatNumber(value: number): string {
   return new Intl.NumberFormat("en-US").format(value);
 }

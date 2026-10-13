@@ -2,8 +2,6 @@
 import { revalidatePath } from "next/cache";
 import { AnthropicProvider } from "@prince/ai";
 import {
-  ForbiddenError,
-  NotFoundError,
   ValidationError,
   cancelApproval,
   cancelRun,
@@ -39,26 +37,9 @@ import {
   type TestRunInput,
   type WorkflowInput,
 } from "@prince/core";
+import { run, type ActionResult } from "./action-result";
 import { db, env, getRunQueue } from "./server";
 import { requireUser } from "./session";
-
-export type ActionResult<T = undefined> =
-  | { ok: true; data: T }
-  | { ok: false; error: string; fieldErrors?: Record<string, string[] | undefined> };
-
-async function run<T>(fn: () => Promise<T>): Promise<ActionResult<T>> {
-  try {
-    return { ok: true, data: await fn() };
-  } catch (error) {
-    if (error instanceof ValidationError)
-      return { ok: false, error: error.message, fieldErrors: error.fieldErrors };
-    if (error instanceof ForbiddenError || error instanceof NotFoundError)
-      return { ok: false, error: error.message };
-    // Unknown errors: log server-side, return a generic message (no internals to the browser).
-    console.error("[action] unexpected error", error);
-    return { ok: false, error: "Unexpected server error. Check the server logs." };
-  }
-}
 
 export async function createBusinessAction(
   input: CreateBusinessInput,
@@ -278,6 +259,9 @@ export async function decideApprovalAction(
     revalidatePath(`/approvals/${approvalId}`);
     if (r.targetType === "command" && r.targetId) revalidatePath(`/command/${r.targetId}`);
     if (r.targetType === "workflow_run") revalidatePath("/workflows", "layout");
+    if (r.targetType === "content_item") revalidatePath("/content", "layout");
+    if (r.targetType === "campaign") revalidatePath("/marketing", "layout");
+    revalidatePath("/calendar");
     return { status: r.status };
   });
 }
@@ -288,6 +272,8 @@ export async function cancelApprovalAction(approvalId: string): Promise<ActionRe
     await cancelApproval(db, user.id, approvalId);
     revalidatePath("/approvals");
     revalidatePath("/workflows", "layout");
+    revalidatePath("/content", "layout");
+    revalidatePath("/marketing", "layout");
     revalidatePath(`/approvals/${approvalId}`);
     return undefined;
   });

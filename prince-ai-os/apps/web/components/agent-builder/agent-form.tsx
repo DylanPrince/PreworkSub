@@ -132,7 +132,7 @@ export function AgentForm({
 
   return (
     <form onSubmit={onSubmit} method="post" noValidate className="flex flex-col gap-6">
-      <fieldset className="grid gap-4 sm:grid-cols-2">
+      <fieldset className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <legend className="mb-2 text-sm font-semibold">Identity</legend>
         {mode.kind === "create" &&
           field(
@@ -216,7 +216,7 @@ export function AgentForm({
           />,
           "Describe the role, method and quality bar. Shared guardrails (no invented data, no external actions, approval rules) are always added in front of these instructions.",
         )}
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {field(
             "outputSchemaKey",
             "Output format",
@@ -268,7 +268,7 @@ export function AgentForm({
         </div>
       </fieldset>
 
-      <fieldset className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <fieldset className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <legend className="mb-2 text-sm font-semibold">Limits</legend>
         {field(
           "maxOutputTokens",

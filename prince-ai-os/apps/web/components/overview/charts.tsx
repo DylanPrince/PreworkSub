@@ -139,3 +139,40 @@ export function CostByAgentChart({ data }: { data: { agent: string; costUsd: num
     </ChartFrame>
   );
 }
+
+/** Monthly net revenue against costs (cost of goods plus operating expenses). */
+export function MonthlyPnlChart({
+  data,
+}: {
+  data: { month: string; netRevenue: number; expenses: number }[];
+}) {
+  return (
+    <div>
+      <ChartFrame label="Net revenue and costs by month">
+        <BarChart data={data} margin={{ left: 0, right: 8, top: 8, bottom: 0 }}>
+          <CartesianGrid stroke="var(--border)" vertical={false} />
+          <XAxis dataKey="month" {...axis} />
+          <YAxis width={56} tickFormatter={(v: number) => `$${v}`} {...axis} />
+          <Tooltip
+            {...tooltipStyle}
+            cursor={{ fill: "var(--surface-2)" }}
+            formatter={(v, name) => [
+              `$${Number(v).toFixed(2)}`,
+              name === "netRevenue" ? "Net revenue" : "Costs",
+            ]}
+          />
+          <Bar dataKey="netRevenue" fill="var(--chart-3)" radius={[3, 3, 0, 0]} />
+          <Bar dataKey="expenses" fill="var(--chart-4)" radius={[3, 3, 0, 0]} />
+        </BarChart>
+      </ChartFrame>
+      <p aria-hidden className="mt-2 flex gap-4 text-xs text-muted-foreground">
+        <span className="flex items-center gap-1.5">
+          <span className="size-2.5 rounded-sm bg-[var(--chart-3)]" /> Net revenue
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="size-2.5 rounded-sm bg-[var(--chart-4)]" /> Costs
+        </span>
+      </p>
+    </div>
+  );
+}

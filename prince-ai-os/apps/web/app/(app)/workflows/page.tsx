@@ -98,7 +98,7 @@ export default async function WorkflowsPage() {
         <h2 id="templates-heading" className="text-sm font-semibold">
           Templates
         </h2>
-        <div className="grid gap-4 lg:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
           {WORKFLOW_TEMPLATES.map((t) => (
             <Card key={t.key}>
               <CardHeader>

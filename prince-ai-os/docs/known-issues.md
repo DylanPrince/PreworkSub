@@ -31,10 +31,16 @@
   says so in its `limitations` field.
 - Cancellation of a running job is cooperative (Postgres polled every second); BullMQ job is not
   force-killed.
-- Overview "Scheduled tasks", revenue and profit show "Not tracked yet" until workflows and the
-  finance module exist.
-- Approvals gate two actions so far (flagged Command Center workstreams and workflow steps marked for
-  approval). There are no notifications for pending requests yet; check the Approvals page or the
+- Overview "Scheduled tasks" shows "Not tracked yet": recurring schedules do not exist.
+- Business modules hold records people enter. No store, ad platform, publishing account, bank or code
+  host is connected: approved content is published and recorded by a person, approved campaigns are
+  launched in the ad platform by a person, and campaign performance is not tracked. Finance figures
+  are only as complete as the entries recorded; there is no import yet.
+- Agents do not write back into module records: their drafts appear on the task page and are copied
+  into the record by a person.
+- Money is in US dollars only. Finance periods and the calendar use UTC days and months.
+- Approvals gate four actions so far (flagged Command Center workstreams, workflow steps marked for
+  approval, content publication and campaign launch). There are no notifications for pending requests yet; check the Approvals page or the
   overview alert.
 - Approval expiry (72 hours) and the rejection block (30 days) are fixed, not configurable.
 - The owner can approve their own requests (single-owner workspaces have no one else); the decision

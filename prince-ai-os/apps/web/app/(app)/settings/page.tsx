@@ -18,7 +18,7 @@ export default async function SettingsPage() {
   return (
     <div className="space-y-4">
       <PageHeader title="Settings" />
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Card>
           <CardHeader>
             <div>
