@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AI OS Mission Control</title>
+  <meta name="color-scheme" content="light dark">
+  <script>
+    // Apply the saved theme before first paint to avoid a flash.
+    try { const t = localStorage.getItem('aios-theme'); if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t; } catch {}
+  </script>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <a class="skip" href="#main">Skip to dashboard</a>
+  <header class="topbar">
+    <div>
+      <h1>AI OS <span class="muted">Mission control</span></h1>
+      <p class="sub" id="source-root">Reading files…</p>
+    </div>
+    <div class="controls">
+      <p id="stamp" class="live">Connecting…</p>
+      <p id="live" class="live" role="status" aria-live="polite"></p>
+      <button type="button" id="refresh" class="btn">Refresh</button>
+      <label class="theme">
+        <span>Theme</span>
+        <select id="theme">
+          <option value="system">System</option>
+          <option value="light">Light</option>
+          <option value="dark">Dark</option>
+        </select>
+      </label>
+    </div>
+  </header>
+
+  <main id="main">
+    <section aria-label="Summary" class="tiles" id="tiles"></section>
+
+    <div class="grid">
+      <section class="panel span-2" aria-labelledby="goals-h">
+        <header class="panel-h"><h2 id="goals-h">Goals and tasks</h2><p class="src" data-src="claude"></p></header>
+        <div id="goals" class="goals"></div>
+      </section>
+
+      <section class="panel" aria-labelledby="appr-h">
+        <header class="panel-h"><h2 id="appr-h">Approval queue</h2><p class="src" data-src="approvals"></p></header>
+        <div id="approvals"></div>
+      </section>
+
+      <section class="panel" aria-labelledby="log-h">
+        <header class="panel-h">
+          <h2 id="log-h">Task progress log</h2>
+          <label class="filter"><span>Agent</span> <select id="log-agent"><option value="">All agents</option></select></label>
+        </header>
+        <div id="log" class="log"></div>
+        <p class="src" data-src="progress"></p>
+      </section>
+
+      <section class="panel" aria-labelledby="tok-h">
+        <header class="panel-h"><h2 id="tok-h">Token usage by agent</h2><p class="src" data-src="usage"></p></header>
+        <div id="tokens"></div>
+      </section>
+
+      <section class="panel" aria-labelledby="lat-h">
+        <header class="panel-h"><h2 id="lat-h">Latency</h2><p class="src" data-src="usage"></p></header>
+        <div id="latency"></div>
+      </section>
+    </div>
+  </main>
+  <div id="tooltip" class="tooltip" role="tooltip" hidden></div>
+  <script src="app.js"></script>
+</body>
+</html>

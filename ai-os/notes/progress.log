@@ -1,0 +1,19 @@
+# timestamp | agent | task | status | message
+# status: started, progress, done, blocked, failed
+2026-10-13T08:02:11Z | orchestrator | G1 | started | Planned onboarding v2 into five tasks
+2026-10-13T08:05:40Z | researcher | T1.1 | started | Pulling funnel events for the last 30 days
+2026-10-13T08:31:02Z | researcher | T1.1 | done | Biggest drop-off is the permissions screen (41%)
+2026-10-13T08:33:15Z | orchestrator | T1.2 | started | Drafting three-step flow
+2026-10-13T09:10:48Z | orchestrator | T1.2 | done | Spec written to notes/onboarding-v2.md
+2026-10-13T09:12:30Z | coder | T1.3 | started | Building welcome screen layout
+2026-10-13T09:40:02Z | orchestrator | G3 | started | Baseline spend before routing changes
+2026-10-13T09:58:19Z | orchestrator | T3.1 | done | Researcher is 52% of tokens; summarisation is the main cost
+2026-10-13T10:05:00Z | researcher | T2.1 | started | Fetching competitor release notes
+2026-10-13T10:47:36Z | researcher | T2.1 | done | Five changelogs collected
+2026-10-13T10:48:10Z | researcher | T2.2 | started | Summarising changes
+2026-10-13T11:20:55Z | coder | T3.2 | started | Adding model router for summarisation tasks
+2026-10-13T12:02:44Z | coder | T1.3 | progress | Layout done, wiring the continue button
+2026-10-13T12:30:09Z | comms | T2.3 | blocked | Needs approval to publish to the shared drive
+2026-10-13T13:15:27Z | coder | T3.2 | failed | Router test failed on long inputs, retrying with chunking
+2026-10-13T13:44:51Z | coder | T3.2 | progress | Chunking fix passes locally
+2026-10-13T14:20:33Z | researcher | T2.2 | progress | Three of five summaries drafted
