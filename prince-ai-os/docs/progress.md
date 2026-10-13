@@ -4,6 +4,42 @@ Status legend: **Done and tested** means covered by automated tests that pass in
 browser. **Built, not yet verified live** means implemented and tested against fakes, but not yet
 exercised against the real external service.
 
+## 2026-10-13 — Session 3 (continued): workflow automation
+
+**Done and tested**
+
+- Workflows (`/workflows`): saved multi-agent procedures for a business. Each step names an agent,
+  instructions (with `{{input}}` for the run's input), the steps it waits for, and whether it needs
+  approval. The server rejects duplicate names, unknown or self dependencies, loops, agents from
+  another business, and more than 12 steps. Admins and owners create, edit (optimistic versioning),
+  disable and archive workflows; members start runs; viewers read.
+- Two templates built on the executable agents: "Product idea validation" (market research, then
+  unit economics, then launch copy after approval) and "Campaign copy from research".
+- Runs snapshot the steps, so editing a workflow never changes a run in progress. Steps start on
+  their own as soon as the steps they wait for succeed (the worker advances the run after every
+  agent run ends), each as an ordinary task and run, so spending limits, reservations, retries,
+  cancellation and audit apply unchanged. Earlier results are forwarded as labelled data.
+- Steps marked for approval become approval requests and start only once an admin or owner
+  approves; a rejected, withdrawn, expired or failed request ends the run as failed with the reason.
+- Paid runs check up front that the worst case of all steps fits what remains under the spending
+  limits, and refuse unpriced models. Each step is still reserved by the worker before its call.
+- Run page with live progress, step status, links to results and approvals, cancel (which also
+  cancels queued steps and withdraws pending requests). Retrying a failed step resumes the run.
+
+**Tests run (all passing)**
+
+- `pnpm typecheck`, `pnpm lint`, `pnpm format:check` clean.
+- `pnpm test`: 127 tests. New (14): graph validation (loops, duplicates, unknown/self dependencies);
+  edit permissions and audit; agents from other businesses refused; per-step error messages;
+  optimistic versioning with run snapshots; templates; dependency order with forwarded results and
+  an approval gate; idempotent and concurrent starts; concurrent advancing starts each step once;
+  rejection, withdrawal and expiry fail the run; a failed step fails the run and its retry resumes
+  it; cancel; disabled workflows, missing key, over-limit and production dry-run refusals.
+- `pnpm test:e2e`: 7 Playwright tests; new: add a template, run it as a dry run, approve the gated
+  step from the run page, and check every step succeeded and received the earlier results.
+- Manual browser check of the list, workflow, editor (including validation) and run pages in dark,
+  light and mobile.
+
 ## 2026-10-13 — Session 3 (continued): approval system
 
 **Done and tested**

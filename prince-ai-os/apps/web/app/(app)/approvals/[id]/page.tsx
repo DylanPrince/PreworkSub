@@ -84,6 +84,13 @@ export default async function ApprovalPage({ params }: { params: Promise<{ id: s
                   <Link href={`/command/${r.targetId}`} className="text-primary hover:underline">
                     Command Center request
                   </Link>
+                ) : r.targetType === "workflow_run" && r.targetId ? (
+                  <Link
+                    href={`/workflows/runs/${r.targetId}`}
+                    className="text-primary hover:underline"
+                  >
+                    Workflow run
+                  </Link>
                 ) : (
                   "—"
                 )

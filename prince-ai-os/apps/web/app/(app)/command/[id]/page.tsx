@@ -9,9 +9,9 @@ import {
   runPolicyFromEnv,
 } from "@prince/core";
 import { formatUsd } from "@prince/shared";
-import { CommandPoller } from "@/components/command/command-poller";
 import { DispatchPanel, type WorkstreamView } from "@/components/command/dispatch-panel";
 import { PageHeader } from "@/components/common/page-header";
+import { ProgressPoller } from "@/components/common/progress-poller";
 import { ProviderBadge, StatusBadge } from "@/components/common/status-badge";
 import { RunActions } from "@/components/tasks/run-controls";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -71,7 +71,13 @@ export default async function CommandPage({ params }: { params: Promise<{ id: st
       <PageHeader
         title="Command"
         description={`${command.business.name} · requested by ${command.createdBy.name} ${relativeTime(command.createdAt)} · ${formatUsd(spent, { precise: true })} spent so far`}
-        actions={<CommandPoller commandId={command.id} signature={signature} active={active} />}
+        actions={
+          <ProgressPoller
+            url={`/api/v1/commands/${command.id}`}
+            signature={signature}
+            active={active}
+          />
+        }
       />
       <Card>
         <CardHeader>

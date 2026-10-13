@@ -34,6 +34,11 @@
   when it runs (state, budget), and requests, decisions and outcomes are audited. A rejected request
   cannot be re-sent unchanged for 30 days by any user or agent. Members and viewers cannot decide;
   other businesses' requests are invisible.
+- **Workflows**: only business admins/owners create or change workflows; members start and cancel
+  runs; viewers read. Step graphs are validated on the server (no loops, at most 12 steps, agents
+  available to the business), each step runs at most once per run, and steps marked for approval
+  start only from the approval handler. Paid runs are checked against the remaining limits before
+  any step starts, and every step is still reserved by the worker.
 - **Agent Builder authorization**: only business admins/owners create or change agents; built-in
   agents are read-only; edits create immutable versions with an optimistic-concurrency guard; every
   change is audited. Agents get a fixed `read:business` permission and no tools.

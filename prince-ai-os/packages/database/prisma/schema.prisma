@@ -29,6 +29,8 @@ model User {
   agentsCreated    Agent[]
   commands         Command[]
   approvalsDecided ApprovalRequest[] @relation("ApprovalDecider")
+  workflows        Workflow[]
+  workflowRuns     WorkflowRun[]
 
   @@map("user")
 }
@@ -107,6 +109,8 @@ model Business {
   runs          AgentRun[]
   commands      Command[]
   approvals     ApprovalRequest[]
+  workflows     Workflow[]
+  workflowRuns  WorkflowRun[]
 }
 
 model Membership {
@@ -221,28 +225,34 @@ enum RunStatus {
 }
 
 model Task {
-  id           String     @id @default(cuid())
-  businessId   String
-  agentId      String
-  title        String
-  instructions String
-  kind         TaskKind   @default(standard)
-  status       TaskStatus @default(open)
+  id            String       @id @default(cuid())
+  businessId    String
+  agentId       String
+  title         String
+  instructions  String
+  kind          TaskKind     @default(standard)
+  status        TaskStatus   @default(open)
   /// Set when the task was created from an AI Command Center request.
-  commandId    String?
+  commandId     String?
   /// Plan workstream this task carries out (null for the planning task itself).
-  workstream   String?
-  createdById  String
-  createdAt    DateTime   @default(now())
-  updatedAt    DateTime   @updatedAt
-  business     Business   @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  agent        Agent      @relation(fields: [agentId], references: [id], onDelete: Restrict)
-  createdBy    User       @relation(fields: [createdById], references: [id], onDelete: Restrict)
-  command      Command?   @relation(fields: [commandId], references: [id], onDelete: SetNull)
-  runs         AgentRun[]
+  workstream    String?
+  /// Set when the task is a step of a workflow run.
+  workflowRunId String?
+  workflowStep  String?
+  createdById   String
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  business      Business     @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  agent         Agent        @relation(fields: [agentId], references: [id], onDelete: Restrict)
+  createdBy     User         @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  command       Command?     @relation(fields: [commandId], references: [id], onDelete: SetNull)
+  workflowRun   WorkflowRun? @relation(fields: [workflowRunId], references: [id], onDelete: SetNull)
+  runs          AgentRun[]
 
   /// A workstream is dispatched at most once per command.
   @@unique([commandId, workstream])
+  /// A workflow step runs at most once per workflow run (no loops).
+  @@unique([workflowRunId, workflowStep])
   @@index([businessId, createdAt])
 }
 
@@ -429,4 +439,72 @@ model ApprovalRequest {
   @@index([businessId, status, createdAt])
   @@index([fingerprint, status])
   @@index([targetType, targetId])
+}
+
+// ---------------------------------------------------------------------------
+// Workflows
+// ---------------------------------------------------------------------------
+
+enum WorkflowStatus {
+  active
+  disabled
+  archived
+}
+
+enum WorkflowRunStatus {
+  running
+  waiting_approval
+  succeeded
+  failed
+  cancelled
+}
+
+/// A saved multi-agent procedure: steps (agent + instructions) with dependencies, forming a graph
+/// without cycles. Steps marked requiresApproval run only through an approved approval request.
+model Workflow {
+  id          String         @id @default(cuid())
+  businessId  String
+  name        String
+  description String         @default("")
+  status      WorkflowStatus @default(active)
+  /// Validated step list (see packages/core/src/workflows.ts). Snapshotted onto each run.
+  steps       Json
+  /// Incremented on every save; runs record the version they used.
+  version     Int            @default(1)
+  createdById String
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  business    Business       @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  createdBy   User           @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  runs        WorkflowRun[]
+
+  @@index([businessId, createdAt])
+}
+
+model WorkflowRun {
+  id              String            @id @default(cuid())
+  workflowId      String
+  businessId      String
+  workflowVersion Int
+  /// The steps as they were when the run started, so later edits never change a running workflow.
+  definition      Json
+  input           String
+  provider        String
+  status          WorkflowRunStatus @default(running)
+  /// Worst case of all steps together, checked against the remaining budget when the run started.
+  estimatedMaxUsd Decimal?          @db.Decimal(12, 6)
+  startedById     String
+  /// Idempotency key from the start form so a double submit cannot start two runs.
+  clientKey       String            @unique
+  error           String?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  finishedAt      DateTime?
+  workflow        Workflow          @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  business        Business          @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  startedBy       User              @relation(fields: [startedById], references: [id], onDelete: Restrict)
+  tasks           Task[]
+
+  @@index([businessId, createdAt])
+  @@index([workflowId, createdAt])
 }

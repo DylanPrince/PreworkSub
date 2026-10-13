@@ -74,9 +74,9 @@ export const NAV_SECTIONS: { title: string; items: NavItem[] }[] = [
         href: "/workflows",
         label: "Workflows",
         icon: Workflow,
-        status: "planned",
+        status: "live",
         milestone: 4,
-        summary: "Visual multi-agent workflows with triggers, branches and approval checkpoints.",
+        summary: "Saved multi-agent workflows with dependencies and approval checkpoints.",
       },
       {
         href: "/tasks",

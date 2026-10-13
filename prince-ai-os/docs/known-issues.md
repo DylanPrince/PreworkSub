@@ -12,10 +12,15 @@
 - If a worker process dies mid-call, the run's reservation stays counted (conservatively) until the
   job is picked up again after its lock expires (60 s) and re-executed.
 - Budget windows attribute a run to the UTC day and month in which its latest attempt started.
-- Command Center workstreams are dispatched by the owner; nothing runs a whole plan automatically
-  yet (that is the workflow milestone). Agent suggestions match plan roles to agent names, so a role
-  with no matching agent needs a manual choice.
-- Forwarded results between workstreams are truncated to 6,000 characters each.
+- Command Center workstreams are dispatched by the owner. Saved workflows run their steps
+  automatically, but a Command Center plan cannot yet be turned into a workflow. Agent suggestions
+  match plan roles to agent names, so a role with no matching agent needs a manual choice.
+- Workflows start by hand only: scheduled, webhook and event triggers are not built. Steps have no
+  conditions or branches; every step runs once its dependencies succeed. The editor is a form, not a
+  visual graph.
+- If a server process stops between creating a workflow step's task and queueing its run, that step
+  stays "open" and the run shows as running; cancel the run and start it again.
+- Forwarded results between workstreams or workflow steps are truncated to 6,000 characters each.
 - Prompts estimated above 80k tokens are refused (`input_too_large`), to stay within the flat price
   tier of every model.
 - If you switch the built-in agents' model to Fable 5.1 (`AI_DEFAULT_MODEL` at first seed), their
@@ -28,8 +33,9 @@
   force-killed.
 - Overview "Scheduled tasks", revenue and profit show "Not tracked yet" until workflows and the
   finance module exist.
-- Approvals currently gate one action (flagged Command Center workstreams). There are no
-  notifications for pending requests yet; check the Approvals page or the overview alert.
+- Approvals gate two actions so far (flagged Command Center workstreams and workflow steps marked for
+  approval). There are no notifications for pending requests yet; check the Approvals page or the
+  overview alert.
 - Approval expiry (72 hours) and the rejection block (30 days) are fixed, not configurable.
 - The owner can approve their own requests (single-owner workspaces have no one else); the decision
   is still a separate, audited step.

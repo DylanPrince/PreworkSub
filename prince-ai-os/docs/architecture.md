@@ -22,15 +22,15 @@ PostgreSQL is the system of record; Redis only carries job ids for BullMQ.
 
 ## Packages
 
-| Package            | Responsibility                                                                                                                                                           | Depends on                      |
-| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------- |
-| `@prince/shared`   | Env validation (Zod), queue names + job contracts, data-provenance labels, formatting                                                                                    | zod                             |
-| `@prince/ai`       | Provider abstraction (`AIProvider`), Anthropic provider (official SDK, structured outputs), mock provider, price table, cost maths                                       | @anthropic-ai/sdk, zod          |
-| `@prince/agents`   | Agent registry (20-agent roster, 4 executable), output contracts (schema + mock output + evaluation), prompt assembly with untrusted-data wrapping                       | zod                             |
-| `@prince/database` | Prisma schema, migrations, client factory, idempotent seed                                                                                                               | prisma, agents, ai              |
-| `@prince/core`     | Service layer: access control, businesses, tasks, run lifecycle, executor, budgets, estimates, Agent Builder, Command Center, approvals, metrics, audit, BullMQ producer | all of the above, bullmq        |
-| `apps/web`         | UI, auth, server actions, versioned route handlers. Calls `@prince/core` only; never talks to the AI provider directly                                                   | core, shared, agents, ai (test) |
-| `apps/worker`      | Consumes `agent-runs` jobs and calls `executeRun`                                                                                                                        | core, ai, database              |
+| Package            | Responsibility                                                                                                                                                                      | Depends on                      |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------- |
+| `@prince/shared`   | Env validation (Zod), queue names + job contracts, data-provenance labels, formatting                                                                                               | zod                             |
+| `@prince/ai`       | Provider abstraction (`AIProvider`), Anthropic provider (official SDK, structured outputs), mock provider, price table, cost maths                                                  | @anthropic-ai/sdk, zod          |
+| `@prince/agents`   | Agent registry (20-agent roster, 4 executable), output contracts (schema + mock output + evaluation), prompt assembly with untrusted-data wrapping                                  | zod                             |
+| `@prince/database` | Prisma schema, migrations, client factory, idempotent seed                                                                                                                          | prisma, agents, ai              |
+| `@prince/core`     | Service layer: access control, businesses, tasks, run lifecycle, executor, budgets, estimates, Agent Builder, Command Center, approvals, workflows, metrics, audit, BullMQ producer | all of the above, bullmq        |
+| `apps/web`         | UI, auth, server actions, versioned route handlers. Calls `@prince/core` only; never talks to the AI provider directly                                                              | core, shared, agents, ai (test) |
+| `apps/worker`      | Consumes `agent-runs` jobs and calls `executeRun`                                                                                                                                   | core, ai, database              |
 
 Boundaries: UI → server actions → `@prince/core` services → Prisma. Services take the Prisma client
 and a `RunQueue` as arguments, so they are testable without Next.js or Redis.
@@ -101,6 +101,26 @@ workstream])`), then each run is requested through `requestRun`, so the worker's
 4. **UI**: `/approvals` lists pending requests and history; `/approvals/:id` shows what happens on
    approval, why it needs approval, the worst-case cost and expiry, and the decision controls. The
    overview counts pending requests.
+
+## Workflow flow
+
+1. **Define** (`workflows.ts`): a workflow is a list of steps (agent, instructions with `{{input}}`,
+   `dependsOn`, `requiresApproval`). `validateStepGraph` rejects duplicate names, unknown or self
+   dependencies and loops; agents must be active, executable and available to the business.
+2. **Start** (`startWorkflowRun`): idempotent on the client key; checks role, status, agents and, for
+   paid runs, that the worst case of all steps fits the remaining limits. The run snapshots the steps
+   (`WorkflowRun.definition`), so later edits never affect it.
+3. **Advance** (`advanceWorkflowRun`): for each step not yet started whose dependencies succeeded,
+   either create its task (unique per run and step) and request its run, or, if it needs approval,
+   record an approval request (action `workflow.run_step`). Earlier results are forwarded as labelled
+   data (`handoff.ts`). The worker calls `onAgentRunSettled` after each run ends; the web app calls it
+   after cancel and retry. Calls are idempotent and safe in parallel.
+4. **Settle** (`settleWorkflowRun`): derives the status from the steps and approvals: `running`,
+   `waiting_approval`, `succeeded`, or `failed` (a step failed or was cancelled, or its approval was
+   rejected, withdrawn, expired or could not run). Cancel is terminal and never overwritten.
+5. **UI**: `/workflows` (list and templates), `/workflows/new` and `/workflows/:id/edit` (editor),
+   `/workflows/:id` (steps, worst case, start a run, recent runs), `/workflows/runs/:id` (live step
+   progress via `/api/v1/workflow-runs/:id`, cancel).
 
 ## Two kinds of "agent"
 

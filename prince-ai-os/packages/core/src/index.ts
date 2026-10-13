@@ -13,5 +13,7 @@ export * from "./agent-builder";
 export * from "./commands";
 export * from "./approval-store";
 export * from "./approvals";
+export * from "./workflows";
+export * from "./handoff";
 export type { RunQueue } from "./run-queue";
 export { BullRunQueue, createAgentRunQueue, createRedisConnection } from "./bullmq";

@@ -96,3 +96,17 @@ rejection blocks the same request for 30 days, whoever asks. Requests expire aft
 owner may approve their own requests: in a single-owner workspace nobody else could. The first
 consumer is the Command Center: workstreams the plan flags for owner approval become requests and run
 only once approved, with the command state and budget re-checked at that moment.
+
+### D15 — Workflows are graphs of ordinary tasks, advanced by events
+
+A workflow is a validated list of steps (agent, instructions, dependencies, approval flag) whose
+dependencies must form a graph without loops; starting a run snapshots that list. A step becomes an
+ordinary task and run, so budgets, reservations, retries, cancellation and audit need no workflow
+special cases, and each step can run at most once per run (a unique task per run and step), which
+together with the loop-free graph bounds how much a run can do. Nothing polls: the worker calls
+`onAgentRunSettled` after every run ends, and the web app does so after cancel or retry; advancing is
+idempotent and safe to run concurrently, and the run's status is always derived from its steps and
+approvals. Steps that need approval use the approval system (D14) with the action
+`workflow.run_step`; the step starts only from that handler. Paid runs are refused up front if the
+worst case of all steps exceeds what remains under the limits, but each step is still reserved by the
+worker before its call.

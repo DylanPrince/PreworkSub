@@ -4,7 +4,14 @@
  */
 import { Worker, UnrecoverableError, type Job } from "bullmq";
 import { AnthropicProvider, MockProvider } from "@prince/ai";
-import { createRedisConnection, executeRun } from "@prince/core";
+import {
+  BullRunQueue,
+  createAgentRunQueue,
+  createRedisConnection,
+  executeRun,
+  onAgentRunSettled,
+  runPolicyFromEnv,
+} from "@prince/core";
 import { getPrisma } from "@prince/database";
 import { QUEUES, getServerEnv, type AgentRunJobV1 } from "@prince/shared";
 import { log } from "./log";
@@ -17,6 +24,9 @@ const providers = {
   mock: env.APP_ENV === "production" ? undefined : new MockProvider(),
 };
 const connection = createRedisConnection(env.REDIS_URL);
+// Producer for follow-up runs: when a workflow step ends, the steps that depend on it are queued.
+const producerConnection = createRedisConnection(env.REDIS_URL);
+const producer = new BullRunQueue(createAgentRunQueue(producerConnection));
 
 async function processJob(job: Job<AgentRunJobV1>) {
   if (job.data?.version !== 1 || typeof job.data.runId !== "string") {
@@ -39,6 +49,17 @@ async function processJob(job: Job<AgentRunJobV1>) {
     throw outcome.error;
   }
   log.info("job.done", { jobId: job.id, runId: job.data.runId, status: outcome.status });
+  if (outcome.status !== "skipped") {
+    try {
+      await onAgentRunSettled(db, producer, job.data.runId, runPolicyFromEnv());
+    } catch (error) {
+      // The run's own result is already stored; the workflow catches up on its next event.
+      log.error("workflow.advance_failed", {
+        runId: job.data.runId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
   return outcome.status;
 }
 
@@ -68,6 +89,7 @@ async function shutdown(signal: string) {
   log.info("worker.shutdown", { signal });
   await worker.close();
   await connection.quit();
+  await producerConnection.quit();
   await db.$disconnect();
   process.exit(0);
 }

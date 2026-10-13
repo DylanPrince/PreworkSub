@@ -7,6 +7,11 @@ import { DISPATCH_WORKSTREAM_ACTION, executeApprovedDispatch } from "./commands"
 import { ForbiddenError, NotFoundError, ValidationError } from "./errors";
 import type { RunQueue } from "./run-queue";
 import { runPolicyFromEnv, type RunPolicy } from "./tasks";
+import {
+  executeApprovedWorkflowStep,
+  RUN_WORKFLOW_STEP_ACTION,
+  settleWorkflowRun,
+} from "./workflows";
 
 /**
  * Approval system. Consequential actions are not performed by the code that wants them: that code
@@ -37,7 +42,18 @@ export const APPROVAL_HANDLERS: Record<string, ApprovalActionHandler> = {
     execute: ({ db, queue, approverId, request, policy }) =>
       executeApprovedDispatch(db, queue, approverId, request, policy),
   },
+  [RUN_WORKFLOW_STEP_ACTION]: {
+    label: "Run a workflow step",
+    execute: ({ db, queue, approverId, request, policy }) =>
+      executeApprovedWorkflowStep(db, queue, approverId, request, policy),
+  },
 };
+
+/** Lets the work an approval belongs to react to a request that will not run. */
+async function afterDeclined(db: PrismaClient, request: ApprovalRequest) {
+  if (request.targetType === "workflow_run" && request.targetId)
+    await settleWorkflowRun(db, request.targetId);
+}
 
 export const CATEGORY_LABELS: Record<ApprovalRequest["category"], string> = {
   spend: "Spends money",
@@ -204,7 +220,11 @@ export async function decideApproval(
         500,
       ),
   });
-  if (status === "rejected") return db.approvalRequest.findUniqueOrThrow({ where: { id } });
+  if (status === "rejected") {
+    const rejected = await db.approvalRequest.findUniqueOrThrow({ where: { id } });
+    await afterDeclined(db, rejected);
+    return rejected;
+  }
 
   const request = await db.approvalRequest.findUniqueOrThrow({ where: { id } });
   const handler = APPROVAL_HANDLERS[request.action];
@@ -239,6 +259,7 @@ export async function decideApproval(
       targetId: id,
       summary: `Approved but could not be carried out: ${request.title}: ${message}`.slice(0, 500),
     });
+    await afterDeclined(db, failed);
     return failed;
   }
 }
@@ -265,4 +286,5 @@ export async function cancelApproval(db: PrismaClient, userId: string, id: strin
     targetId: id,
     summary: `Withdrawn: ${request.title}`.slice(0, 500),
   });
+  await afterDeclined(db, request);
 }

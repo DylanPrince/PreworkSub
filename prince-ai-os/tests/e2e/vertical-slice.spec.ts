@@ -234,6 +234,55 @@ test.describe.serial("first vertical slice", () => {
     await expect(page.getByText(/Result of the earlier workstream "Research"/)).toBeVisible();
   });
 
+  test("owner runs a workflow template as a dry run and approves its gated step", async ({
+    page,
+  }) => {
+    await signIn(page);
+    await page.getByRole("link", { name: "Workflows" }).first().click();
+    await page.getByRole("button", { name: "Use template: Product idea validation" }).click();
+    await expect(page.getByRole("heading", { name: "Product idea validation" })).toBeVisible();
+    const steps = page.getByRole("region", { name: "Steps" });
+    await expect(steps.getByText("Needs approval")).toHaveCount(1);
+
+    // Validation is enforced on the server and shown next to the field.
+    await page.getByRole("button", { name: "Dry run (mock)" }).click();
+    await expect(page.getByText("Describe what this run should work on")).toBeVisible();
+    await page.getByLabel("Input for this run").fill("A refillable bamboo toothbrush subscription");
+    await page.getByRole("button", { name: "Dry run (mock)" }).click();
+    await expect(
+      page.getByRole("heading", { name: "Run of Product idea validation" }),
+    ).toBeVisible();
+
+    const progress = page.getByRole("region", { name: "Step progress" });
+    const stepItem = (title: string) => progress.getByRole("listitem", { name: title });
+    await expect(stepItem("Unit economics").getByText("succeeded", { exact: true })).toBeVisible({
+      timeout: 30_000,
+    });
+    await expect(stepItem("Market research").getByText("succeeded", { exact: true })).toBeVisible();
+    // The gated step did not start: it waits in the Approvals queue.
+    await expect(page.getByText("A step is waiting for approval")).toBeVisible();
+    await expect(stepItem("Launch copy").getByText("Open result")).toHaveCount(0);
+    await stepItem("Launch copy").getByRole("link", { name: "Waiting for decision" }).click();
+
+    await expect(page.getByText(/The agent produces analysis and drafts only/)).toBeVisible();
+    await page.getByRole("button", { name: "Approve and run" }).click();
+    const decision = page.getByRole("region", { name: "Decision" });
+    await expect(decision.getByText("Approved · carried out").first()).toBeVisible();
+    await page.getByRole("link", { name: "Workflow run" }).click();
+    await expect(stepItem("Launch copy").getByText("succeeded", { exact: true })).toBeVisible({
+      timeout: 30_000,
+    });
+    await page.reload();
+    await expect(
+      page.getByRole("heading", { name: "Run of Product idea validation" }),
+    ).toBeVisible();
+    await expect(page.getByText("succeeded", { exact: true }).first()).toBeVisible();
+
+    // Each step received the results of the steps it waited for.
+    await stepItem("Unit economics").getByRole("link", { name: "Open result" }).click();
+    await expect(page.getByText(/Result of the earlier step "Market research"/)).toBeVisible();
+  });
+
   test("every sidebar page renders in light and dark mode", async ({ page }) => {
     await signIn(page);
     const links = await page.getByRole("navigation", { name: "Main" }).getByRole("link").all();

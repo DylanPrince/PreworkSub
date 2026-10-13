@@ -7,6 +7,7 @@ const TONES = {
   succeeded: "success",
   failed: "danger",
   cancelled: "warning",
+  waiting_approval: "warning",
   active: "success",
   disabled: "neutral",
   archived: "neutral",
@@ -19,7 +20,7 @@ export function StatusBadge({ status }: { status: string }) {
       {status === "running" && (
         <span aria-hidden className="size-1.5 animate-pulse rounded-full bg-current" />
       )}
-      {status}
+      {status.replaceAll("_", " ")}
     </Badge>
   );
 }
