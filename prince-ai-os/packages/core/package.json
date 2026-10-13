@@ -1,0 +1,25 @@
+{
+  "name": "@prince/core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@prince/agents": "workspace:*",
+    "@prince/ai": "workspace:*",
+    "@prince/database": "workspace:*",
+    "@prince/shared": "workspace:*",
+    "bullmq": "6.3.14",
+    "ioredis": "5.11.1",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "typescript": "6.0.3"
+  }
+}

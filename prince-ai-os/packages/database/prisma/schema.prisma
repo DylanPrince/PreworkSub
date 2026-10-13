@@ -1,0 +1,744 @@
+// Prince AI OS data model. Postgres is the system of record; Redis/BullMQ only carries job ids.
+
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "esm"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------------------------------------------------------------------------
+// Authentication (Better Auth core schema)
+// ---------------------------------------------------------------------------
+
+model User {
+  id               String            @id
+  name             String
+  email            String            @unique
+  emailVerified    Boolean           @default(false)
+  image            String?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  sessions         Session[]
+  accounts         Account[]
+  memberships      Membership[]
+  tasks            Task[]
+  agentsCreated    Agent[]
+  commands         Command[]
+  approvalsDecided ApprovalRequest[] @relation("ApprovalDecider")
+  workflows        Workflow[]
+  workflowRuns     WorkflowRun[]
+
+  @@map("user")
+}
+
+model Session {
+  id        String   @id
+  expiresAt DateTime
+  token     String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("session")
+}
+
+model Account {
+  id                    String    @id
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([userId])
+  @@map("account")
+}
+
+model Verification {
+  id         String   @id
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
+  @@map("verification")
+}
+
+// ---------------------------------------------------------------------------
+// Business workspaces
+// ---------------------------------------------------------------------------
+
+enum MembershipRole {
+  owner
+  admin
+  member
+  viewer
+}
+
+model Business {
+  id             String            @id @default(cuid())
+  name           String
+  slug           String            @unique
+  description    String            @default("")
+  businessModel  String            @default("")
+  goals          String[]          @default([])
+  archivedAt     DateTime?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+  memberships    Membership[]
+  agents         Agent[]
+  tasks          Task[]
+  runs           AgentRun[]
+  commands       Command[]
+  approvals      ApprovalRequest[]
+  workflows      Workflow[]
+  workflowRuns   WorkflowRun[]
+  financeEntries FinanceEntry[]
+  suppliers      Supplier[]
+  products       Product[]
+  contentItems   ContentItem[]
+  campaigns      Campaign[]
+  saasProjects   SaasProject[]
+}
+
+model Membership {
+  id         String         @id @default(cuid())
+  businessId String
+  userId     String
+  role       MembershipRole @default(member)
+  createdAt  DateTime       @default(now())
+  business   Business       @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  user       User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([businessId, userId])
+  @@index([userId])
+}
+
+// ---------------------------------------------------------------------------
+// Agent registry
+// ---------------------------------------------------------------------------
+
+enum AgentStatus {
+  active
+  disabled
+  /// Hidden from task creation and the main roster; history is kept.
+  archived
+}
+
+/// An agent instance. businessId = null means it is a shared agent available to every workspace
+/// (it still only ever sees the data of the business a given task belongs to).
+/// templateKey = null means a custom agent created in Agent Builder (always business-scoped).
+model Agent {
+  id                 String         @id @default(cuid())
+  templateKey        String?
+  /// Template a custom agent was duplicated from, for provenance only.
+  basedOnTemplateKey String?
+  createdById        String?
+  businessId         String?
+  name               String
+  description        String
+  specialization     String
+  division           String
+  status             AgentStatus    @default(active)
+  currentVersion     Int            @default(1)
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+  business           Business?      @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  createdBy          User?          @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  versions           AgentVersion[]
+  tasks              Task[]
+  runs               AgentRun[]
+
+  @@unique([templateKey, businessId])
+  @@index([businessId])
+}
+
+/// Immutable configuration snapshot. Runs pin the version they executed with.
+/// How much reasoning Claude puts into a response. Thinking tokens are billed as output and count
+/// toward maxOutputTokens, so higher effort needs a larger output allowance.
+enum ReasoningEffort {
+  low
+  medium
+  high
+}
+
+model AgentVersion {
+  id              String           @id @default(cuid())
+  agentId         String
+  version         Int
+  model           String
+  systemPrompt    String
+  allowedTools    String[]         @default([])
+  permissions     String[]         @default([])
+  outputSchemaKey String
+  maxOutputTokens Int              @default(4096)
+  budgetUsdPerRun Decimal          @default(0.5) @db.Decimal(12, 6)
+  timeoutMs       Int              @default(120000)
+  maxAttempts     Int              @default(3)
+  /// Sent as output_config.effort. Null leaves the model's own default in place.
+  effort          ReasoningEffort?
+  changeNote      String           @default("")
+  createdById     String?
+  createdAt       DateTime         @default(now())
+  agent           Agent            @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@unique([agentId, version])
+}
+
+// ---------------------------------------------------------------------------
+// Tasks and execution
+// ---------------------------------------------------------------------------
+
+enum TaskStatus {
+  open
+  queued
+  running
+  succeeded
+  failed
+  cancelled
+}
+
+enum TaskKind {
+  standard
+  /// Created from Agent Builder's test panel.
+  test
+}
+
+enum RunStatus {
+  queued
+  running
+  succeeded
+  failed
+  cancelled
+}
+
+model Task {
+  id            String       @id @default(cuid())
+  businessId    String
+  agentId       String
+  title         String
+  instructions  String
+  kind          TaskKind     @default(standard)
+  status        TaskStatus   @default(open)
+  /// Set when the task was created from an AI Command Center request.
+  commandId     String?
+  /// Plan workstream this task carries out (null for the planning task itself).
+  workstream    String?
+  /// Set when the task is a step of a workflow run.
+  workflowRunId String?
+  workflowStep  String?
+  /// Module record this task works on (e.g. "product", "content_item", "campaign").
+  subjectType   String?
+  subjectId     String?
+  createdById   String
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  business      Business     @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  agent         Agent        @relation(fields: [agentId], references: [id], onDelete: Restrict)
+  createdBy     User         @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  command       Command?     @relation(fields: [commandId], references: [id], onDelete: SetNull)
+  workflowRun   WorkflowRun? @relation(fields: [workflowRunId], references: [id], onDelete: SetNull)
+  runs          AgentRun[]
+
+  /// A workstream is dispatched at most once per command.
+  @@unique([commandId, workstream])
+  /// A workflow step runs at most once per workflow run (no loops).
+  @@unique([workflowRunId, workflowStep])
+  @@index([businessId, createdAt])
+  @@index([subjectType, subjectId])
+}
+
+/// A request made in the AI Command Center: a planning task, then owner-approved dispatch of the
+/// plan's workstreams to specialist agents.
+model Command {
+  id          String   @id @default(cuid())
+  businessId  String
+  createdById String
+  request     String
+  /// Idempotency key from the composer so a double submit cannot create two commands.
+  clientKey   String   @unique
+  planTaskId  String?  @unique
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  business    Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  createdBy   User     @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  tasks       Task[]
+
+  @@index([businessId, createdAt])
+}
+
+model AgentRun {
+  id                       String     @id @default(cuid())
+  taskId                   String
+  agentId                  String
+  agentVersion             Int
+  businessId               String
+  status                   RunStatus  @default(queued)
+  idempotencyKey           String     @unique
+  provider                 String
+  model                    String
+  attempts                 Int        @default(0)
+  inputTokens              Int?
+  outputTokens             Int?
+  cacheCreationInputTokens Int?
+  cacheReadInputTokens     Int?
+  /// Part of outputTokens the model spent thinking (already included in outputTokens and cost).
+  thinkingTokens           Int?
+  /// USD cost of all attempts, computed from provider-reported usage and the ModelPrice table.
+  costUsd                  Decimal?   @db.Decimal(12, 6)
+  /// True when part of costUsd is a worst-case estimate (e.g. a request aborted before the
+  /// provider reported usage) rather than provider-reported usage.
+  costIsEstimate           Boolean    @default(false)
+  /// Worst-case cost held against the global budget while an attempt is in flight. Counted as
+  /// spend until the attempt finishes, so concurrent runs cannot jointly overshoot a limit.
+  reservedUsd              Decimal?   @db.Decimal(12, 6)
+  stopReason               String?
+  output                   Json?
+  outputText               String?
+  errorCode                String?
+  errorMessage             String?
+  durationMs               Int?
+  /// Time spent waiting on the AI provider (excludes queue wait).
+  providerLatencyMs        Int?
+  queuedAt                 DateTime   @default(now())
+  startedAt                DateTime?
+  finishedAt               DateTime?
+  cancelRequestedAt        DateTime?
+  task                     Task       @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  agent                    Agent      @relation(fields: [agentId], references: [id], onDelete: Restrict)
+  business                 Business   @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  events                   RunEvent[]
+
+  @@index([businessId, queuedAt])
+  @@index([agentId, queuedAt])
+  @@index([status])
+  @@index([startedAt])
+}
+
+model RunEvent {
+  id        String   @id @default(cuid())
+  runId     String
+  type      String
+  message   String
+  data      Json?
+  createdAt DateTime @default(now())
+  run       AgentRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([runId, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Cost configuration and audit
+// ---------------------------------------------------------------------------
+
+/// Configurable price table (USD per million tokens). Source and verification date are recorded
+/// so stale prices are visible.
+model ModelPrice {
+  model             String   @id
+  displayName       String
+  inputPerMTok      Decimal  @db.Decimal(12, 6)
+  outputPerMTok     Decimal  @db.Decimal(12, 6)
+  cacheWritePerMTok Decimal  @db.Decimal(12, 6)
+  cacheReadPerMTok  Decimal  @db.Decimal(12, 6)
+  source            String
+  verifiedAt        DateTime
+  updatedAt         DateTime @updatedAt
+}
+
+enum ActorType {
+  user
+  agent
+  system
+}
+
+model AuditEvent {
+  id         String    @id @default(cuid())
+  actorType  ActorType
+  actorId    String?
+  businessId String?
+  action     String
+  targetType String
+  targetId   String?
+  summary    String
+  metadata   Json?
+  createdAt  DateTime  @default(now())
+
+  @@index([businessId, createdAt])
+  @@index([createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Approvals
+// ---------------------------------------------------------------------------
+
+enum ApprovalStatus {
+  pending
+  approved
+  rejected
+  expired
+  cancelled
+  executed
+  failed
+}
+
+/// Why an action needs a human decision. Mirrors the consequential-action classes in docs/security.md.
+enum ApprovalCategory {
+  spend
+  publish
+  purchase
+  contact_customers
+  deploy
+  credentials
+  legal
+  destructive
+  owner_flagged
+}
+
+/// A consequential action waiting for, or carrying, a human decision. The action itself runs only
+/// through decideApproval, after an admin or owner approves it; nothing else can execute it.
+model ApprovalRequest {
+  id               String           @id @default(cuid())
+  businessId       String
+  /// Key of the action handler in @prince/core (e.g. "command.dispatch_workstream").
+  action           String
+  category         ApprovalCategory
+  title            String
+  /// What happens on approval, in plain words.
+  summary          String
+  /// Why the action needs approval.
+  reason           String
+  payload          Json
+  /// Hash of business, action and payload: identical requests share it.
+  fingerprint      String
+  estimatedCostUsd Decimal?         @db.Decimal(12, 6)
+  status           ApprovalStatus   @default(pending)
+  requestedByType  ActorType
+  requestedById    String?
+  targetType       String?
+  targetId         String?
+  decidedById      String?
+  decidedAt        DateTime?
+  decisionNote     String           @default("")
+  expiresAt        DateTime
+  executedAt       DateTime?
+  result           Json?
+  errorMessage     String?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+  business         Business         @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  decidedBy        User?            @relation("ApprovalDecider", fields: [decidedById], references: [id], onDelete: SetNull)
+
+  @@index([businessId, status, createdAt])
+  @@index([fingerprint, status])
+  @@index([targetType, targetId])
+}
+
+// ---------------------------------------------------------------------------
+// Workflows
+// ---------------------------------------------------------------------------
+
+enum WorkflowStatus {
+  active
+  disabled
+  archived
+}
+
+enum WorkflowRunStatus {
+  running
+  waiting_approval
+  succeeded
+  failed
+  cancelled
+}
+
+/// A saved multi-agent procedure: steps (agent + instructions) with dependencies, forming a graph
+/// without cycles. Steps marked requiresApproval run only through an approved approval request.
+model Workflow {
+  id          String         @id @default(cuid())
+  businessId  String
+  name        String
+  description String         @default("")
+  status      WorkflowStatus @default(active)
+  /// Validated step list (see packages/core/src/workflows.ts). Snapshotted onto each run.
+  steps       Json
+  /// Incremented on every save; runs record the version they used.
+  version     Int            @default(1)
+  createdById String
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  business    Business       @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  createdBy   User           @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  runs        WorkflowRun[]
+
+  @@index([businessId, createdAt])
+}
+
+model WorkflowRun {
+  id              String            @id @default(cuid())
+  workflowId      String
+  businessId      String
+  workflowVersion Int
+  /// The steps as they were when the run started, so later edits never change a running workflow.
+  definition      Json
+  input           String
+  provider        String
+  status          WorkflowRunStatus @default(running)
+  /// Worst case of all steps together, checked against the remaining budget when the run started.
+  estimatedMaxUsd Decimal?          @db.Decimal(12, 6)
+  startedById     String
+  /// Idempotency key from the start form so a double submit cannot start two runs.
+  clientKey       String            @unique
+  error           String?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  finishedAt      DateTime?
+  workflow        Workflow          @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  business        Business          @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  startedBy       User              @relation(fields: [startedById], references: [id], onDelete: Restrict)
+  tasks           Task[]
+
+  @@index([businessId, createdAt])
+  @@index([workflowId, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Business modules. Records are entered by people (or imported later); every figure keeps its
+// source so nothing estimated or entered is shown as measured. createdById is the user's id.
+// ---------------------------------------------------------------------------
+
+enum RecordSource {
+  user_entered
+  imported
+  estimated
+}
+
+enum FinanceKind {
+  revenue
+  refund
+  cogs
+  operating_expense
+  ad_spend
+  subscription
+  other_income
+  other_expense
+}
+
+model FinanceEntry {
+  id          String       @id @default(cuid())
+  businessId  String
+  kind        FinanceKind
+  /// Always positive; the kind decides whether it adds or subtracts.
+  amountUsd   Decimal      @db.Decimal(14, 2)
+  occurredOn  DateTime     @db.Date
+  description String
+  source      RecordSource @default(user_entered)
+  createdById String
+  voidedAt    DateTime?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  business    Business     @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@index([businessId, occurredOn])
+}
+
+model Supplier {
+  id           String    @id @default(cuid())
+  businessId   String
+  name         String
+  website      String    @default("")
+  contact      String    @default("")
+  leadTimeDays Int?
+  minimumOrder Int?
+  notes        String    @default("")
+  archivedAt   DateTime?
+  createdById  String
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  business     Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  products     Product[]
+
+  @@index([businessId])
+}
+
+enum ProductStage {
+  idea
+  researching
+  sourcing
+  ready
+  listed
+  retired
+}
+
+model Product {
+  id              String       @id @default(cuid())
+  businessId      String
+  name            String
+  description     String       @default("")
+  stage           ProductStage @default(idea)
+  supplierId      String?
+  priceUsd        Decimal?     @db.Decimal(12, 2)
+  unitCostUsd     Decimal?     @db.Decimal(12, 2)
+  shippingCostUsd Decimal?     @db.Decimal(12, 2)
+  /// Marketplace or payment fee as a percentage of price.
+  feePercent      Decimal?     @db.Decimal(5, 2)
+  feeFixedUsd     Decimal?     @db.Decimal(12, 2)
+  source          RecordSource @default(user_entered)
+  notes           String       @default("")
+  archivedAt      DateTime?
+  createdById     String
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  business        Business     @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  supplier        Supplier?    @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+
+  @@index([businessId, stage])
+}
+
+enum ContentFormat {
+  blog
+  short_video
+  long_video
+  social_post
+  email
+  ad
+  other
+}
+
+enum ContentStage {
+  idea
+  drafting
+  review
+  approved
+  published
+}
+
+model ContentItem {
+  id           String        @id @default(cuid())
+  businessId   String
+  title        String
+  format       ContentFormat
+  channel      String        @default("")
+  stage        ContentStage  @default(idea)
+  brief        String        @default("")
+  body         String        @default("")
+  /// Planned publication date; set when publication is approved.
+  scheduledFor DateTime?
+  /// Recorded by a person after publishing outside Prince AI OS (no publishing integration).
+  publishedAt  DateTime?
+  publishedUrl String        @default("")
+  archivedAt   DateTime?
+  createdById  String
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  business     Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@index([businessId, stage])
+  @@index([scheduledFor])
+}
+
+enum CampaignStatus {
+  planning
+  approved
+  ended
+}
+
+model Campaign {
+  id          String         @id @default(cuid())
+  businessId  String
+  name        String
+  objective   String
+  audience    String         @default("")
+  channels    String[]       @default([])
+  /// Planned budget. Advisory: nothing is spent by Prince AI OS.
+  budgetUsd   Decimal?       @db.Decimal(12, 2)
+  startsOn    DateTime?      @db.Date
+  endsOn      DateTime?      @db.Date
+  status      CampaignStatus @default(planning)
+  notes       String         @default("")
+  archivedAt  DateTime?
+  createdById String
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  business    Business       @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@index([businessId, status])
+}
+
+enum SaasStage {
+  idea
+  specification
+  building
+  testing
+  launched
+  paused
+}
+
+model SaasProject {
+  id            String        @id @default(cuid())
+  businessId    String
+  name          String
+  summary       String        @default("")
+  stage         SaasStage     @default(idea)
+  repositoryUrl String        @default("")
+  requirements  String        @default("")
+  archivedAt    DateTime?
+  createdById   String
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  business      Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  items         BacklogItem[]
+
+  @@index([businessId])
+}
+
+enum BacklogType {
+  feature
+  bug
+  chore
+}
+
+enum BacklogStatus {
+  todo
+  in_progress
+  done
+}
+
+enum Priority {
+  low
+  medium
+  high
+}
+
+model BacklogItem {
+  id          String        @id @default(cuid())
+  projectId   String
+  title       String
+  details     String        @default("")
+  type        BacklogType   @default(feature)
+  status      BacklogStatus @default(todo)
+  priority    Priority      @default(medium)
+  createdById String
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  project     SaasProject   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, status])
+}
