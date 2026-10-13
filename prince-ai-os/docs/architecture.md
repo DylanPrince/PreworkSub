@@ -22,15 +22,15 @@ PostgreSQL is the system of record; Redis only carries job ids for BullMQ.
 
 ## Packages
 
-| Package            | Responsibility                                                                                                                                                | Depends on                      |
-| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------- |
-| `@prince/shared`   | Env validation (Zod), queue names + job contracts, data-provenance labels, formatting                                                                         | zod                             |
-| `@prince/ai`       | Provider abstraction (`AIProvider`), Anthropic provider (official SDK, structured outputs), mock provider, price table, cost maths                            | @anthropic-ai/sdk, zod          |
-| `@prince/agents`   | Agent registry (20-agent roster, 4 executable), output contracts (schema + mock output + evaluation), prompt assembly with untrusted-data wrapping            | zod                             |
-| `@prince/database` | Prisma schema, migrations, client factory, idempotent seed                                                                                                    | prisma, agents, ai              |
-| `@prince/core`     | Service layer: access control, businesses, tasks, run lifecycle, executor, budgets, estimates, Agent Builder, Command Center, metrics, audit, BullMQ producer | all of the above, bullmq        |
-| `apps/web`         | UI, auth, server actions, versioned route handlers. Calls `@prince/core` only; never talks to the AI provider directly                                        | core, shared, agents, ai (test) |
-| `apps/worker`      | Consumes `agent-runs` jobs and calls `executeRun`                                                                                                             | core, ai, database              |
+| Package            | Responsibility                                                                                                                                                           | Depends on                      |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------- |
+| `@prince/shared`   | Env validation (Zod), queue names + job contracts, data-provenance labels, formatting                                                                                    | zod                             |
+| `@prince/ai`       | Provider abstraction (`AIProvider`), Anthropic provider (official SDK, structured outputs), mock provider, price table, cost maths                                       | @anthropic-ai/sdk, zod          |
+| `@prince/agents`   | Agent registry (20-agent roster, 4 executable), output contracts (schema + mock output + evaluation), prompt assembly with untrusted-data wrapping                       | zod                             |
+| `@prince/database` | Prisma schema, migrations, client factory, idempotent seed                                                                                                               | prisma, agents, ai              |
+| `@prince/core`     | Service layer: access control, businesses, tasks, run lifecycle, executor, budgets, estimates, Agent Builder, Command Center, approvals, metrics, audit, BullMQ producer | all of the above, bullmq        |
+| `apps/web`         | UI, auth, server actions, versioned route handlers. Calls `@prince/core` only; never talks to the AI provider directly                                                   | core, shared, agents, ai (test) |
+| `apps/worker`      | Consumes `agent-runs` jobs and calls `executeRun`                                                                                                                        | core, ai, database              |
 
 Boundaries: UI → server actions → `@prince/core` services → Prisma. Services take the Prisma client
 and a `RunQueue` as arguments, so they are testable without Next.js or Redis.
@@ -82,6 +82,25 @@ and a `RunQueue` as arguments, so they are testable without Next.js or Redis.
    limits, else nothing is created. Tasks are created in one transaction (`@@unique([commandId,
 workstream])`), then each run is requested through `requestRun`, so the worker's reservation still
    guards every call.
+
+4. **Flagged workstreams**: a workstream the plan marks `requiresHumanApproval` is not dispatched.
+   `dispatchWorkstreams` records an approval request for it (action
+   `command.dispatch_workstream`) and the dispatch panel shows it as awaiting approval.
+
+## Approval flow
+
+1. **Request** (`requestApproval`, `approval-store.ts`): under an advisory lock on the payload
+   fingerprint, returns an identical pending request if one exists, refuses one rejected in the last
+   30 days, otherwise creates it (72-hour expiry) and audits `approval.requested`.
+2. **Decide** (`decideApproval`, `approvals.ts`): admin or owner only. A conditional update moves
+   `pending` to `approved` or `rejected` (zero rows means someone else decided or it expired).
+3. **Execute**: on approval, the handler registered for the action key runs as the approver and
+   re-validates everything (for a workstream: still ready, not dispatched, agent available, paid batch
+   within the remaining budget). The request ends `executed` with a result (the task id) or `failed`
+   with the reason. Nothing else can run the action.
+4. **UI**: `/approvals` lists pending requests and history; `/approvals/:id` shows what happens on
+   approval, why it needs approval, the worst-case cost and expiry, and the decision controls. The
+   overview counts pending requests.
 
 ## Two kinds of "agent"
 

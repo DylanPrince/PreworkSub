@@ -51,6 +51,13 @@ export const OUTPUT_CONTRACTS: Record<OutputSchemaKey, OutputContract> = {
           dependsOn: ["Research"],
           requiresHumanApproval: false,
         },
+        {
+          title: "Launch copy",
+          owner: "Copywriting Agent",
+          description: "Mock launch copy (flagged: it would be published)",
+          dependsOn: ["Financial check"],
+          requiresHumanApproval: true,
+        },
       ],
       risks: ["Mock output: no real analysis performed"],
       decisionsForOwner: ["Whether to configure a real AI provider"],

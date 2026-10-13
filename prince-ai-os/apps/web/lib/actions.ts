@@ -5,11 +5,13 @@ import {
   ForbiddenError,
   NotFoundError,
   ValidationError,
+  cancelApproval,
   cancelRun,
   createBusiness,
   createCommand,
   createCustomAgent,
   createTask,
+  decideApproval,
   dispatchWorkstreams,
   duplicateAgent,
   restoreAgentVersion,
@@ -25,6 +27,7 @@ import {
   type CreateAgentInput,
   type CreateBusinessInput,
   type CreateTaskInput,
+  type DecideApprovalInput,
   type TestRunInput,
 } from "@prince/core";
 import { db, env, getRunQueue } from "./server";
@@ -232,12 +235,37 @@ export async function createCommandAction(
 export async function dispatchWorkstreamsAction(
   commandId: string,
   input: DispatchInput,
-): Promise<ActionResult<{ dispatched: number }>> {
+): Promise<ActionResult<{ dispatched: number; awaitingApproval: number }>> {
   const user = await requireUser();
   return run(async () => {
     const r = await dispatchWorkstreams(db, getRunQueue(), user.id, commandId, input);
     revalidatePath(`/command/${commandId}`);
     revalidatePath("/tasks");
-    return { dispatched: r.tasks.length };
+    revalidatePath("/approvals");
+    return { dispatched: r.tasks.length, awaitingApproval: r.approvals.length };
+  });
+}
+
+export async function decideApprovalAction(
+  approvalId: string,
+  input: DecideApprovalInput,
+): Promise<ActionResult<{ status: string }>> {
+  const user = await requireUser();
+  return run(async () => {
+    const r = await decideApproval(db, getRunQueue(), user.id, approvalId, input);
+    revalidatePath("/approvals");
+    revalidatePath(`/approvals/${approvalId}`);
+    if (r.targetType === "command" && r.targetId) revalidatePath(`/command/${r.targetId}`);
+    return { status: r.status };
+  });
+}
+
+export async function cancelApprovalAction(approvalId: string): Promise<ActionResult> {
+  const user = await requireUser();
+  return run(async () => {
+    await cancelApproval(db, user.id, approvalId);
+    revalidatePath("/approvals");
+    revalidatePath(`/approvals/${approvalId}`);
+    return undefined;
   });
 }

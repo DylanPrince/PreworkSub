@@ -90,7 +90,7 @@ export const NAV_SECTIONS: { title: string; items: NavItem[] }[] = [
         href: "/approvals",
         label: "Approvals",
         icon: ShieldCheck,
-        status: "planned",
+        status: "live",
         milestone: 4,
         summary: "Backend-enforced human approval queue for consequential actions.",
       },

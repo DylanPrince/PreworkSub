@@ -12,6 +12,13 @@ import type { RunModes } from "@/components/tasks/run-controls";
 import { dispatchWorkstreamsAction } from "@/lib/actions";
 import { useHydrated } from "@/lib/use-hydrated";
 
+const APPROVAL_OUTCOME: Record<string, string> = {
+  rejected: "rejected",
+  expired: "expired",
+  cancelled: "withdrawn",
+  failed: "approved but could not run",
+};
+
 export interface WorkstreamView {
   title: string;
   owner: string;
@@ -19,6 +26,8 @@ export interface WorkstreamView {
   dependsOn: string[];
   requiresHumanApproval: boolean;
   ready: boolean;
+  awaitingApproval: boolean;
+  approval: { id: string; status: string; decisionNote: string } | null;
   unmetDependencies: string[];
   suggestedAgentId: string | null;
   estimates: Record<string, number | null>;
@@ -33,7 +42,8 @@ export interface WorkstreamView {
 
 /**
  * The owner's review step: choose which ready workstreams to dispatch and to which agent, see the
- * combined worst-case cost, and start them as paid Claude runs or free dry runs.
+ * combined worst-case cost, and start them as paid Claude runs or free dry runs. Workstreams the
+ * plan flagged go to the Approvals queue instead of starting.
  */
 export function DispatchPanel({
   commandId,
@@ -52,19 +62,35 @@ export function DispatchPanel({
   const hydrated = useHydrated();
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const [sentForApproval, setSentForApproval] = useState(0);
+  // Flagged workstreams start unselected so asking for approval is a deliberate choice.
   const [selected, setSelected] = useState<Record<string, boolean>>(() =>
-    Object.fromEntries(workstreams.map((w) => [w.title, w.ready && !!w.suggestedAgentId])),
+    Object.fromEntries(
+      workstreams.map((w) => [
+        w.title,
+        w.ready && !!w.suggestedAgentId && !w.requiresHumanApproval,
+      ]),
+    ),
   );
   const [choice, setChoice] = useState<Record<string, string>>(() =>
     Object.fromEntries(workstreams.map((w) => [w.title, w.suggestedAgentId ?? ""])),
   );
 
   const chosen = workstreams.filter((w) => w.ready && selected[w.title] && choice[w.title]);
+  const flaggedChosen = chosen.filter((w) => w.requiresHumanApproval).length;
   const total = useMemo(
     () => chosen.reduce((n, w) => n + (w.estimates[choice[w.title]!] ?? 0), 0),
     [chosen, choice],
   );
-  const overBudget = total > remainingUsd;
+  // Only unflagged workstreams start now; flagged ones are checked again when approved.
+  const startingNowTotal = useMemo(
+    () =>
+      chosen
+        .filter((w) => !w.requiresHumanApproval)
+        .reduce((n, w) => n + (w.estimates[choice[w.title]!] ?? 0), 0),
+    [chosen, choice],
+  );
+  const overBudget = startingNowTotal > remainingUsd;
 
   const dispatch = (provider: "anthropic" | "mock") =>
     start(async () => {
@@ -73,7 +99,10 @@ export function DispatchPanel({
         items: chosen.map((w) => ({ workstream: w.title, agentId: choice[w.title]! })),
       });
       if (!res.ok) setError(res.error);
-      else setError(null);
+      else {
+        setError(null);
+        setSentForApproval(res.data.awaitingApproval);
+      }
       router.refresh();
     });
 
@@ -139,8 +168,27 @@ export function DispatchPanel({
                           ` · ${formatUsd(w.task.costUsd, { precise: true })}`}
                       </Link>
                     </>
+                  ) : w.awaitingApproval && w.approval ? (
+                    <>
+                      <Badge tone="warning">Awaiting approval</Badge>
+                      <Link
+                        href={`/approvals/${w.approval.id}`}
+                        className="text-xs text-primary hover:underline"
+                      >
+                        Review request
+                      </Link>
+                    </>
                   ) : w.ready ? (
                     <>
+                      {w.approval && w.approval.status !== "executed" && (
+                        <Link
+                          href={`/approvals/${w.approval.id}`}
+                          className="text-xs text-muted-foreground hover:underline"
+                        >
+                          Last request {APPROVAL_OUTCOME[w.approval.status] ?? w.approval.status}
+                          {w.approval.decisionNote && `: ${w.approval.decisionNote}`}
+                        </Link>
+                      )}
                       <Select
                         aria-label={`Agent for ${w.title}`}
                         className="h-8 w-full text-xs sm:w-56"
@@ -182,6 +230,12 @@ export function DispatchPanel({
             refused. Select fewer workstreams or use a dry run.
           </p>
         )}
+        {flaggedChosen > 0 && (
+          <p className="text-xs text-warning">
+            {flaggedChosen} selected workstream{flaggedChosen === 1 ? " is" : "s are"} flagged for
+            owner approval and will go to Approvals instead of starting.
+          </p>
+        )}
         <p className="text-xs text-muted-foreground">
           Agents produce analysis and drafts only. Nothing is published, purchased, sent or paid.
         </p>
@@ -209,6 +263,14 @@ export function DispatchPanel({
         {error && (
           <p role="alert" className="text-sm text-danger">
             {error}
+          </p>
+        )}
+        {sentForApproval > 0 && (
+          <p role="status" className="text-sm text-success">
+            {sentForApproval} workstream{sentForApproval === 1 ? "" : "s"} sent for approval.{" "}
+            <Link href="/approvals" className="text-primary hover:underline">
+              Open Approvals
+            </Link>
           </p>
         )}
       </div>

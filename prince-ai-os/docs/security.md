@@ -25,8 +25,15 @@
   prompts estimated above 80k tokens are refused before any call. These are app safeguards; a Console
   spend limit is the hard cap (`docs/api-key-setup.md`).
 - **Command Center**: plans never run their workstreams automatically. The owner (or a member)
-  reviews and dispatches each one; workstreams the plan flags for owner approval are labelled. Viewers
-  can read commands but not dispatch; other businesses' commands are invisible.
+  reviews and dispatches each one; workstreams the plan flags for owner approval go to the approval
+  queue instead of starting. Viewers can read commands but not dispatch; other businesses' commands
+  are invisible.
+- **Approval system** (`packages/core/src/approvals.ts`): consequential actions are recorded as
+  approval requests and carried out only by a registered handler after a business admin or owner
+  approves. Decisions are atomic (one winner, never after the 72-hour expiry), the action is re-checked
+  when it runs (state, budget), and requests, decisions and outcomes are audited. A rejected request
+  cannot be re-sent unchanged for 30 days by any user or agent. Members and viewers cannot decide;
+  other businesses' requests are invisible.
 - **Agent Builder authorization**: only business admins/owners create or change agents; built-in
   agents are read-only; edits create immutable versions with an optimistic-concurrency guard; every
   change is audited. Agents get a fixed `read:business` permission and no tools.
@@ -38,15 +45,18 @@
 
 ## Not yet implemented (tracked in known-issues.md)
 
-- Approval system for consequential actions (M4). Until it exists, no agent has any tool that can act
-  externally.
+- Tools that act outside Prince AI OS. None exist; each one will be an approval handler, so it can
+  only run after an approval.
+- Notifications (email or push) for pending approvals.
 - Encrypted credential storage for third-party integrations (M6).
 - MFA, Content-Security-Policy, secure file uploads, webhook signature verification, dependency
   scanning in CI, sandboxed code execution (M6–M7).
 
-## Approval policy (target design, M4)
+## Approval policy
 
 Mandatory human approval for payments, purchases, refunds, ad spend, public publishing,
 customer-facing commitments, destructive operations, production deployments, credential changes and
-legal submissions. Enforced in `@prince/core` before any tool executes, recorded in the audit log, with
-expiry. A denied action is keyed by action fingerprint so another agent cannot re-request it.
+legal submissions (the `ApprovalCategory` values). Enforced in `@prince/core`: the action exists only
+as an approval handler, recorded in the audit log, with expiry. A rejected action is keyed by its
+fingerprint so another user or agent cannot re-request it unchanged. Implemented now for flagged
+Command Center workstreams; future external tools will register handlers the same way.

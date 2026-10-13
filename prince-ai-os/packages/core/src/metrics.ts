@@ -1,5 +1,6 @@
 import type { PrismaClient } from "@prince/database";
 import { accessibleBusinessIds } from "./access";
+import { countPendingApprovals } from "./approvals";
 import { startOfUtcDay, startOfUtcMonth, spendSince } from "./budget";
 
 export interface OverviewFilters {
@@ -110,9 +111,10 @@ export async function getOverview(db: PrismaClient, userId: string, filters: Ove
       ? latencies[Math.min(latencies.length - 1, Math.floor((p / 100) * latencies.length))]!
       : null;
 
-  const [spendToday, spendMonth] = await Promise.all([
+  const [spendToday, spendMonth, pendingApprovals] = await Promise.all([
     spendSince(db, startOfUtcDay()),
     spendSince(db, startOfUtcMonth()),
+    countPendingApprovals(db, businessIds),
   ]);
 
   return {
@@ -124,8 +126,8 @@ export async function getOverview(db: PrismaClient, userId: string, filters: Ove
       queuedRuns,
       failedRuns,
       succeededRuns,
-      // Approvals and scheduled jobs arrive in Milestone 4; reported as null (not tracked) rather than 0.
-      pendingApprovals: null as number | null,
+      pendingApprovals,
+      // Scheduled jobs arrive with workflows; reported as null (not tracked) rather than 0.
       scheduledTasks: null as number | null,
     },
     ai: {

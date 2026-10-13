@@ -49,8 +49,10 @@ Never run `prisma migrate reset` or anything that wipes a database without the o
 - Secrets only in server env (`packages/shared/src/env.ts`). Never in client code, commits or chat.
 - Untrusted content (business data, task text, future web/tool results) is wrapped by `buildUserPrompt`.
 - Consequential actions (payments, purchases, refunds, ad spend, publishing, deployments, credential
-  changes, legal submissions, destructive ops) require backend-enforced approval (M4). Until then no
-  agent gets a tool that acts externally.
+  changes, legal submissions, destructive ops) never run directly: the caller records
+  `requestApproval(...)` and the action runs only from a handler in `APPROVAL_HANDLERS`
+  (`packages/core/src/approvals.ts`) after an admin or owner approves. No agent has a tool that acts
+  externally yet; any future one must go through this path.
 - Ask the owner before: paid services, deploys, exposing the app publicly, credential changes,
   deleting data, modifying external accounts.
 

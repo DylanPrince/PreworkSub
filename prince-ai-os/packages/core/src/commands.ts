@@ -1,8 +1,9 @@
 import { z } from "zod";
-import type { PrismaClient } from "@prince/database";
+import type { ApprovalRequest, PrismaClient } from "@prince/database";
 import type { ProviderName } from "@prince/ai";
 import { buildSystemPrompt, buildUserPrompt, executivePlanSchema } from "@prince/agents";
 import { accessibleBusinessIds, requireBusinessRole } from "./access";
+import { expireStaleApprovals, requestApproval } from "./approval-store";
 import { listAgents } from "./agents";
 import { recordAudit } from "./audit";
 import { getBudgetStatus } from "./budget";
@@ -16,8 +17,13 @@ import { requestRun, runPolicyFromEnv, type RunPolicy } from "./tasks";
  * turns it into workstreams, and the owner reviews the plan, its estimated costs and approval flags
  * before dispatching workstreams to specialist agents. Nothing is dispatched without the owner's
  * explicit action, and a workstream only becomes available once the workstreams it depends on have
- * succeeded; their outputs are passed along as context.
+ * succeeded; their outputs are passed along as context. Workstreams the plan flags as needing owner
+ * approval are never dispatched directly: they become approval requests, and only an approved
+ * request (decided by an admin or owner on the Approvals page) dispatches them.
  */
+
+/** Approval action key for dispatching a workstream the plan flagged. */
+export const DISPATCH_WORKSTREAM_ACTION = "command.dispatch_workstream";
 
 const PLAN_CONTRACT = "executive-plan.v1";
 /** Upper bound on dependency output forwarded into a dependent workstream's instructions. */
@@ -199,6 +205,15 @@ export async function getCommand(db: PrismaClient, userId: string, commandId: st
   if (!command) throw new NotFoundError("Command");
   await requireBusinessRole(db, userId, command.businessId, "viewer");
 
+  await expireStaleApprovals(db);
+  const approvals = await db.approvalRequest.findMany({
+    where: { targetType: "command", targetId: commandId, action: DISPATCH_WORKSTREAM_ACTION },
+    orderBy: { createdAt: "desc" },
+  });
+  /** Most recent approval request for a workstream, if any. */
+  const approvalFor = (title: string): ApprovalRequest | undefined =>
+    approvals.find((a) => (a.payload as { workstream?: string } | null)?.workstream === title);
+
   const planTask = command.tasks.find((t) => t.id === command.planTaskId) ?? null;
   const planRun = planTask?.runs.find((r) => r.status === "succeeded") ?? null;
   const parsedPlan = planRun ? executivePlanSchema.safeParse(planRun.output) : null;
@@ -252,6 +267,8 @@ export async function getCommand(db: PrismaClient, userId: string, commandId: st
         const unmet = w.dependsOn.filter((d) => !succeeded(d));
         /** Worst-case USD per candidate agent (null when the model has no price entry). */
         const estimates = Object.fromEntries(agents.map((a) => [a.id, estimateFor(a.id, w)]));
+        const approval = approvalFor(w.title);
+        const awaitingApproval = !task && approval?.status === "pending";
         return {
           ...w,
           task: task
@@ -264,7 +281,11 @@ export async function getCommand(db: PrismaClient, userId: string, commandId: st
             : null,
           suggestedAgentId: suggested?.id ?? null,
           unmetDependencies: unmet,
-          ready: !task && unmet.length === 0,
+          approval: approval
+            ? { id: approval.id, status: approval.status, decisionNote: approval.decisionNote }
+            : null,
+          awaitingApproval,
+          ready: !task && unmet.length === 0 && !awaitingApproval,
           estimates,
         };
       })
@@ -312,10 +333,145 @@ export const dispatchInput = z.object({
 });
 export type DispatchInput = z.input<typeof dispatchInput>;
 
+type CommandView = Awaited<ReturnType<typeof getCommand>>;
+
+interface PlannedWorkstream {
+  workstream: CommandView["workstreams"][number];
+  agentId: string;
+  agentName: string;
+  instructions: string;
+}
+
+/** Validates a selection against the command's current state and builds each task's instructions. */
+function planDispatch(
+  view: CommandView,
+  items: { workstream: string; agentId: string }[],
+): PlannedWorkstream[] {
+  if (!view.plan) throw new ValidationError("The plan has not completed successfully yet");
+  if (new Set(items.map((i) => i.workstream)).size !== items.length)
+    throw new ValidationError("Each workstream can be selected once");
+  return items.map((item) => {
+    const w = view.workstreams.find((x) => x.title === item.workstream);
+    if (!w) throw new ValidationError(`"${item.workstream}" is not in this plan`);
+    if (w.task) throw new ValidationError(`"${w.title}" has already been dispatched`);
+    if (w.unmetDependencies.length > 0)
+      throw new ValidationError(
+        `"${w.title}" is waiting on ${w.unmetDependencies.map((d) => `"${d}"`).join(", ")}`,
+      );
+    if (w.awaitingApproval)
+      throw new ValidationError(`"${w.title}" is already waiting for an approval decision`);
+    const agent = view.agents.find((a) => a.id === item.agentId);
+    if (!agent) throw new ValidationError(`The agent chosen for "${w.title}" is not available`);
+    const dependencies = w.dependsOn.map((title) => {
+      const t = view.command.tasks.find((x) => x.workstream === title)!;
+      const run = t.runs.find((r) => r.status === "succeeded");
+      return { title, output: run?.outputText ?? "" };
+    });
+    return {
+      workstream: w,
+      agentId: agent.id,
+      agentName: agent.name,
+      instructions: buildWorkstreamInstructions(view.command.request, w, dependencies),
+    };
+  });
+}
+
+async function worstCaseOf(db: PrismaClient, view: CommandView, p: PlannedWorkstream) {
+  const e = await estimateAgentRunUsd(db, p.agentId, view.command.business, {
+    title: p.workstream.title,
+    instructions: p.instructions,
+  });
+  return e?.worstCaseUsd ?? 0;
+}
+
+/** Refuses a paid batch whose combined worst case does not fit what remains under the limits. */
+async function assertPaidBatchFits(
+  db: PrismaClient,
+  view: CommandView,
+  planned: PlannedWorkstream[],
+  policy: RunPolicy,
+) {
+  if (!policy.anthropicConfigured)
+    throw new ValidationError(
+      "Claude is not configured: add ANTHROPIC_API_KEY to the server environment, or dispatch as a dry run.",
+    );
+  let total = 0;
+  for (const p of planned) total += await worstCaseOf(db, view, p);
+  const budget = await getBudgetStatus(db, policy.budget);
+  const room = Math.min(budget.day.remainingUsd, budget.month.remainingUsd);
+  if (total > room) {
+    throw new ValidationError(
+      `${planned.length > 1 ? "These runs" : "This run"} could cost up to $${total.toFixed(4)}${planned.length > 1 ? " together" : ""}, but only $${room.toFixed(4)} remains under your spending limits. Dispatch fewer workstreams or use a dry run.`,
+    );
+  }
+}
+
+/** Creates the tasks in one transaction, then requests a run for each. */
+async function createAndRun(
+  db: PrismaClient,
+  queue: RunQueue,
+  userId: string,
+  view: CommandView,
+  planned: PlannedWorkstream[],
+  provider: ProviderName,
+  policy: RunPolicy,
+  approvalId?: string,
+) {
+  const command = view.command;
+  const tasks = await db
+    .$transaction(async (tx) => {
+      const created = [];
+      for (const p of planned) {
+        created.push(
+          await tx.task.create({
+            data: {
+              businessId: command.businessId,
+              agentId: p.agentId,
+              commandId: command.id,
+              workstream: p.workstream.title,
+              title: p.workstream.title.slice(0, 200),
+              instructions: p.instructions.slice(0, 20_000),
+              createdById: userId,
+            },
+          }),
+        );
+      }
+      await recordAudit(tx, {
+        actorType: "user",
+        actorId: userId,
+        businessId: command.businessId,
+        action: "command.dispatched",
+        targetType: "command",
+        targetId: command.id,
+        summary:
+          `Dispatched ${created.length} workstream(s) as ${provider === "mock" ? "dry runs" : "Claude runs"}${approvalId ? " after approval" : ""}: ${planned.map((p) => p.workstream.title).join(", ")}`.slice(
+            0,
+            500,
+          ),
+        metadata: approvalId ? { approvalId } : undefined,
+      });
+      return created;
+    })
+    .catch((error: unknown) => {
+      // A concurrent dispatch of the same workstream hits the (commandId, workstream) constraint.
+      if ((error as { code?: string }).code === "P2002")
+        throw new ValidationError("One of these workstreams was just dispatched. Reload the page.");
+      throw error;
+    });
+
+  const runs = [];
+  for (const task of tasks) {
+    runs.push(await requestRun(db, queue, userId, task.id, { provider, policy }));
+  }
+  return { tasks, runs };
+}
+
 /**
- * Creates and runs one task per selected workstream. Refuses workstreams whose dependencies have
- * not succeeded, workstreams already dispatched, agents the business cannot use, and (for paid
- * runs) a batch whose combined worst case does not fit the remaining daily or monthly budget.
+ * Dispatches the selected workstreams. Unflagged workstreams become tasks and runs right away;
+ * workstreams the plan flagged for owner approval become approval requests instead and run only
+ * once approved. Refuses workstreams whose dependencies have not succeeded, workstreams already
+ * dispatched or awaiting a decision, agents the business cannot use, and (for paid runs) a batch
+ * whose combined worst case does not fit the remaining daily or monthly budget.
  */
 export async function dispatchWorkstreams(
   db: PrismaClient,
@@ -334,104 +490,80 @@ export async function dispatchWorkstreams(
   await requireBusinessRole(db, userId, command.businessId, "member");
 
   const view = await getCommand(db, userId, commandId);
-  if (!view.plan) throw new ValidationError("The plan has not completed successfully yet");
-  if (new Set(input.items.map((i) => i.workstream)).size !== input.items.length)
-    throw new ValidationError("Each workstream can be selected once");
+  const planned = planDispatch(view, input.items);
+  const provider = input.provider as ProviderName;
+  const immediate = planned.filter((p) => !p.workstream.requiresHumanApproval);
+  const flagged = planned.filter((p) => p.workstream.requiresHumanApproval);
 
-  const planned = input.items.map((item) => {
-    const w = view.workstreams.find((x) => x.title === item.workstream);
-    if (!w) throw new ValidationError(`"${item.workstream}" is not in this plan`);
-    if (w.task) throw new ValidationError(`"${w.title}" has already been dispatched`);
-    if (w.unmetDependencies.length > 0)
-      throw new ValidationError(
-        `"${w.title}" is waiting on ${w.unmetDependencies.map((d) => `"${d}"`).join(", ")}`,
-      );
-    if (!view.agents.some((a) => a.id === item.agentId))
-      throw new ValidationError(`The agent chosen for "${w.title}" is not available`);
-    const dependencies = w.dependsOn.map((title) => {
-      const t = view.command.tasks.find((x) => x.workstream === title)!;
-      const run = t.runs.find((r) => r.status === "succeeded");
-      return { title, output: run?.outputText ?? "" };
+  if (provider === "anthropic") await assertPaidBatchFits(db, view, immediate, policy);
+  const { tasks, runs } = immediate.length
+    ? await createAndRun(db, queue, userId, view, immediate, provider, policy)
+    : { tasks: [], runs: [] };
+
+  const approvals = [];
+  for (const p of flagged) {
+    const worstCase = provider === "anthropic" ? await worstCaseOf(db, view, p) : 0;
+    const { request } = await requestApproval(db, {
+      businessId: command.businessId,
+      action: DISPATCH_WORKSTREAM_ACTION,
+      category: "owner_flagged",
+      title: `Run "${p.workstream.title}" with ${p.agentName}`,
+      summary: `Dispatches the workstream "${p.workstream.title}" of the request "${command.request.slice(0, 160)}" to ${p.agentName} as ${provider === "mock" ? "a dry run (no charge)" : `a paid Claude run (worst case $${worstCase.toFixed(4)})`}. The agent produces analysis and drafts only; nothing is published, purchased, sent or paid.`,
+      reason:
+        "The plan marks this workstream as needing owner approval because it concerns money, publishing, customer commitments, deployments or credentials.",
+      payload: {
+        commandId,
+        workstream: p.workstream.title,
+        agentId: p.agentId,
+        provider,
+      },
+      estimatedCostUsd: worstCase,
+      requestedBy: { type: "user", id: userId },
+      target: { type: "command", id: commandId },
     });
-    return {
-      workstream: w,
-      agentId: item.agentId,
-      instructions: buildWorkstreamInstructions(command.request, w, dependencies),
-    };
-  });
-
-  if (input.provider === "anthropic") {
-    if (!policy.anthropicConfigured)
-      throw new ValidationError(
-        "Claude is not configured: add ANTHROPIC_API_KEY to the server environment, or dispatch as a dry run.",
-      );
-    let total = 0;
-    for (const p of planned) {
-      const e = await estimateAgentRunUsd(db, p.agentId, view.command.business, {
-        title: p.workstream.title,
-        instructions: p.instructions,
-      });
-      total += e?.worstCaseUsd ?? 0;
-    }
-    const budget = await getBudgetStatus(db, policy.budget);
-    const room = Math.min(budget.day.remainingUsd, budget.month.remainingUsd);
-    if (total > room) {
-      throw new ValidationError(
-        `These runs could cost up to $${total.toFixed(4)} together, but only $${room.toFixed(4)} remains under your spending limits. Dispatch fewer workstreams or use a dry run.`,
-      );
-    }
+    approvals.push(request);
   }
+  return { tasks, runs, approvals };
+}
 
-  const tasks = await db
-    .$transaction(async (tx) => {
-      const created = [];
-      for (const p of planned) {
-        created.push(
-          await tx.task.create({
-            data: {
-              businessId: command.businessId,
-              agentId: p.agentId,
-              commandId,
-              workstream: p.workstream.title,
-              title: p.workstream.title.slice(0, 200),
-              instructions: p.instructions.slice(0, 20_000),
-              createdById: userId,
-            },
-          }),
-        );
-      }
-      await recordAudit(tx, {
-        actorType: "user",
-        actorId: userId,
-        businessId: command.businessId,
-        action: "command.dispatched",
-        targetType: "command",
-        targetId: commandId,
-        summary:
-          `Dispatched ${created.length} workstream(s) as ${input.provider === "mock" ? "dry runs" : "Claude runs"}: ${planned.map((p) => p.workstream.title).join(", ")}`.slice(
-            0,
-            500,
-          ),
-      });
-      return created;
-    })
-    .catch((error: unknown) => {
-      // A concurrent dispatch of the same workstream hits the (commandId, workstream) constraint.
-      if ((error as { code?: string }).code === "P2002")
-        throw new ValidationError("One of these workstreams was just dispatched. Reload the page.");
-      throw error;
-    });
+const dispatchApprovalPayload = z.object({
+  commandId: z.string(),
+  workstream: z.string(),
+  agentId: z.string(),
+  provider: z.enum(["anthropic", "mock"]),
+});
 
-  const runs = [];
-  for (const task of tasks) {
-    runs.push(
-      await requestRun(db, queue, userId, task.id, {
-        provider: input.provider as ProviderName,
-        policy,
-      }),
-    );
-  }
-  return { tasks, runs };
+/**
+ * Approval handler: dispatches one flagged workstream after an admin or owner approved it. The
+ * command's state is re-checked at this point, and paid runs must still fit the budget.
+ */
+export async function executeApprovedDispatch(
+  db: PrismaClient,
+  queue: RunQueue,
+  approverId: string,
+  request: ApprovalRequest,
+  policy: RunPolicy,
+) {
+  const payload = dispatchApprovalPayload.parse(request.payload);
+  const command = await db.command.findUnique({ where: { id: payload.commandId } });
+  if (!command || command.businessId !== request.businessId)
+    throw new ValidationError("The Command Center request no longer exists");
+  const view = await getCommand(db, approverId, command.id);
+  const planned = planDispatch(view, [
+    { workstream: payload.workstream, agentId: payload.agentId },
+  ]);
+  if (payload.provider === "anthropic") await assertPaidBatchFits(db, view, planned, policy);
+  const { tasks, runs } = await createAndRun(
+    db,
+    queue,
+    approverId,
+    view,
+    planned,
+    payload.provider,
+    policy,
+    request.id,
+  );
+  return { taskId: tasks[0]!.id, runId: runs[0]!.id };
 }
 
 /** Compact signature of a command's progress, polled by the UI to know when to refresh. */
@@ -451,11 +583,16 @@ export async function commandSignature(db: PrismaClient, userId: string, command
   });
   if (!command) throw new NotFoundError("Command");
   await requireBusinessRole(db, userId, command.businessId, "viewer");
-  const parts = command.tasks
-    .map(
+  const approvals = await db.approvalRequest.findMany({
+    where: { targetType: "command", targetId: commandId },
+    select: { id: true, status: true },
+  });
+  const parts = [
+    ...command.tasks.map(
       (t) => `${t.id}:${t.status}:${t.runs.map((r) => `${r.status}${r._count.events}`).join(",")}`,
-    )
-    .sort();
+    ),
+    ...approvals.map((a) => `${a.id}:${a.status}`),
+  ].sort();
   const active = command.tasks.some((t) => t.status === "queued" || t.status === "running");
   return { signature: parts.join("|"), active };
 }

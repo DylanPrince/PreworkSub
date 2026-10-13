@@ -176,8 +176,11 @@ test.describe.serial("first vertical slice", () => {
     await expect(plan.getByText(/came from the mock provider/)).toBeVisible();
 
     const workstreams = page.getByRole("region", { name: "Workstreams" });
-    const research = workstreams.getByRole("listitem").filter({ hasText: "Research" }).first();
-    const finance = workstreams.getByRole("listitem").filter({ hasText: "Financial check" });
+    const item = (title: string) =>
+      workstreams.getByRole("listitem").filter({ has: page.getByText(title, { exact: true }) });
+    const research = item("Research");
+    const finance = item("Financial check");
+    const launch = item("Launch copy");
     await expect(research.getByRole("checkbox")).toBeChecked();
     await expect(finance.getByText("Waiting on Research")).toBeVisible();
     await expect(workstreams.getByRole("button", { name: "Dispatch with Claude" })).toBeDisabled();
@@ -194,10 +197,41 @@ test.describe.serial("first vertical slice", () => {
     await workstreams.getByRole("button", { name: "Dispatch as dry run" }).click();
     await expect(finance.getByText("succeeded", { exact: true })).toBeVisible({ timeout: 30_000 });
 
-    // The dependent task received the earlier result as context.
+    // The plan flagged "Launch copy" for owner approval: it goes to Approvals instead of starting.
+    await expect(launch.getByText("Owner approval flagged")).toBeVisible();
+    await expect(launch.getByRole("checkbox")).not.toBeChecked();
+    await launch.getByRole("checkbox").check();
+    await expect(workstreams.getByText(/will go to Approvals instead of starting/)).toBeVisible();
+    await workstreams.getByRole("button", { name: "Dispatch as dry run" }).click();
+    await expect(launch.getByText("Awaiting approval")).toBeVisible();
+    await expect(launch.getByRole("link", { name: /task/ })).toHaveCount(0);
+
+    // The overview counts it, and the owner approves it on its own page.
+    await page.goto("/");
+    await page.getByRole("link", { name: /1 approval request\(s\) waiting/ }).click();
+    const queue = page.getByRole("region", { name: "Waiting for a decision" });
+    await queue.getByRole("link", { name: 'Run "Launch copy" with Copywriting Agent' }).click();
+    await expect(
+      page.getByText(/plan marks this workstream as needing owner approval/),
+    ).toBeVisible();
+    await page.getByLabel("Note (optional)").fill("Fine as a draft");
+    await page.getByRole("button", { name: "Approve and run" }).click();
+    const decision = page.getByRole("region", { name: "Decision" });
+    await expect(decision.getByText("Approved · carried out").first()).toBeVisible();
+    await expect(decision.getByText("Fine as a draft")).toBeVisible();
+    await decision.getByRole("link", { name: "open the task" }).click();
+    await expect(
+      page
+        .getByRole("region", { name: "Latest run" })
+        .getByText("succeeded", { exact: true })
+        .first(),
+    ).toBeVisible({ timeout: 30_000 });
+
+    // The approved workstream ran, and the dependent task received the earlier result as context.
+    await page.getByRole("link", { name: /Command Center request/ }).click();
+    await expect(launch.getByText("succeeded", { exact: true })).toBeVisible({ timeout: 30_000 });
     await finance.getByRole("link", { name: /Financial Analyst task/ }).click();
     await expect(page.getByText(/Result of the earlier workstream "Research"/)).toBeVisible();
-    await expect(page.getByRole("link", { name: /Command Center request/ })).toBeVisible();
   });
 
   test("every sidebar page renders in light and dark mode", async ({ page }) => {

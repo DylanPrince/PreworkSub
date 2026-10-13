@@ -26,8 +26,13 @@
   says so in its `limitations` field.
 - Cancellation of a running job is cooperative (Postgres polled every second); BullMQ job is not
   force-killed.
-- Overview "Pending approvals", "Scheduled tasks", revenue and profit show "Not tracked yet" until
-  M4/M5.
+- Overview "Scheduled tasks", revenue and profit show "Not tracked yet" until workflows and the
+  finance module exist.
+- Approvals currently gate one action (flagged Command Center workstreams). There are no
+  notifications for pending requests yet; check the Approvals page or the overview alert.
+- Approval expiry (72 hours) and the rejection block (30 days) are fixed, not configurable.
+- The owner can approve their own requests (single-owner workspaces have no one else); the decision
+  is still a separate, audited step.
 - Built-in (shared) agents cannot be edited or disabled in the UI; duplicate them into a business
   instead. There is no instance-admin role yet.
 - Agent Builder offers vetted output contracts only; free-form custom JSON schemas are not supported.

@@ -81,3 +81,18 @@ come only from the registry, so the seed adds a new version when a template chan
 estimated above 80k tokens are refused before any call, keeping every run inside the flat price tier
 (Haiku 5.5 charges more above 100k). Thinking tokens are stored per run for visibility; they are
 already part of output tokens and cost.
+
+### D14 — Approvals run actions through registered handlers only
+
+Code that wants a consequential action records an `ApprovalRequest` (business, action key, category,
+plain-language summary and reason, payload, worst-case cost, requester, expiry) instead of doing it.
+Only `decideApproval` can carry the action out, by calling the handler registered for that action key
+after a business admin or owner approves; an unknown key fails rather than running. A decision is a
+conditional status change (`pending` → `approved`/`rejected`, never after expiry), so racing clicks
+execute an action at most once. The approver's identity is used for execution and every step is
+audited (`approval.requested`, `approved`/`rejected`, `executed`/`failed`, `cancelled`). Identical
+requests share a payload fingerprint: a pending duplicate is returned instead of created, and a
+rejection blocks the same request for 30 days, whoever asks. Requests expire after 72 hours. The
+owner may approve their own requests: in a single-owner workspace nobody else could. The first
+consumer is the Command Center: workstreams the plan flags for owner approval become requests and run
+only once approved, with the command state and budget re-checked at that moment.

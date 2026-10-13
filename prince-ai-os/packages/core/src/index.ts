@@ -11,5 +11,7 @@ export * from "./metrics";
 export * from "./ai-status";
 export * from "./agent-builder";
 export * from "./commands";
+export * from "./approval-store";
+export * from "./approvals";
 export type { RunQueue } from "./run-queue";
 export { BullRunQueue, createAgentRunQueue, createRedisConnection } from "./bullmq";

@@ -4,6 +4,38 @@ Status legend: **Done and tested** means covered by automated tests that pass in
 browser. **Built, not yet verified live** means implemented and tested against fakes, but not yet
 exercised against the real external service.
 
+## 2026-10-13 — Session 3 (continued): approval system
+
+**Done and tested**
+
+- Approval system enforced in the backend. Consequential actions are recorded as approval requests
+  (what happens, why it needs approval, category, worst-case cost, requester, 72-hour expiry) and are
+  carried out only by a registered handler after a business admin or owner approves. Racing approvals
+  execute once; expired requests cannot be approved; a rejected request cannot be re-sent unchanged
+  for 30 days; the action is re-checked when it runs and ends as carried out or failed with the
+  reason. Requesters and admins can withdraw a pending request. Every step is audited.
+- First enforced action: Command Center workstreams the plan flags for owner approval go to the
+  queue instead of starting, and run (as tasks linked to the approval) only once approved.
+- Approvals page (`/approvals`): pending requests with business, category, requester, expiry and
+  cost, plus decision history. Detail page with Approve and run, Reject (with a note) and Withdraw.
+  Overview shows the real pending count and an alert linking to the queue. The Command Center shows
+  "Awaiting approval" with a link, and the last outcome when a request was rejected or failed.
+- The mock plan now includes a flagged workstream ("Launch copy") so the approval path can be tried
+  for free.
+
+**Tests run (all passing)**
+
+- `pnpm typecheck`, `pnpm lint`, `pnpm format:check` clean.
+- `pnpm test`: 113 tests. New: flagged workstream becomes a pending request and no task; duplicate
+  dispatch refused while pending; members, viewers and outsiders cannot decide; approval runs the
+  task as the approver with the full audit trail; two racing approvals run it once; rejection blocks
+  the same request but allows a changed one; approved-but-over-budget ends failed with no task;
+  idempotent requests and key-order-independent fingerprints; expiry; unknown actions fail; withdraw
+  rules; listing scoped to members with decide rights; overview count.
+- `pnpm test:e2e`: 6 Playwright tests; the Command Center test now sends the flagged workstream for
+  approval, approves it from the overview alert and queue, and checks the task ran.
+- Manual browser check of the queue, detail and Command Center states in dark, light and mobile.
+
 ## 2026-10-13 — Session 3: AI Command Center, Anthropic docs verification
 
 **Done and tested**

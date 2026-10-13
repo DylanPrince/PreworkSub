@@ -50,6 +50,8 @@ export default async function CommandPage({ params }: { params: Promise<{ id: st
     dependsOn: w.dependsOn,
     requiresHumanApproval: w.requiresHumanApproval,
     ready: w.ready,
+    awaitingApproval: w.awaitingApproval,
+    approval: w.approval,
     unmetDependencies: w.unmetDependencies,
     suggestedAgentId: w.suggestedAgentId,
     estimates: w.estimates,

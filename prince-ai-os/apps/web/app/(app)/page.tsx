@@ -47,7 +47,13 @@ export default async function OverviewPage({
     getAiStatus(db, runPolicyFromEnv()),
   ]);
 
-  const alerts: { tone: "warning" | "danger"; text: string }[] = [];
+  const alerts: { tone: "warning" | "danger"; text: string; href?: string }[] = [];
+  if (o.counts.pendingApprovals > 0)
+    alerts.push({
+      tone: "warning",
+      text: `${o.counts.pendingApprovals} approval request(s) waiting for a decision.`,
+      href: "/approvals",
+    });
   if (ai.mode === "not_configured")
     alerts.push({
       tone: "warning",
@@ -115,7 +121,13 @@ export default async function OverviewPage({
               className={`flex items-start gap-2 rounded-lg border px-3 py-2 text-sm ${a.tone === "danger" ? "border-danger/40 bg-danger-soft text-danger" : "border-warning/40 bg-warning-soft text-warning"}`}
             >
               <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden />
-              {a.text}
+              {a.href ? (
+                <Link href={a.href} className="underline-offset-2 hover:underline">
+                  {a.text}
+                </Link>
+              ) : (
+                a.text
+              )}
             </li>
           ))}
         </ul>
@@ -139,9 +151,7 @@ export default async function OverviewPage({
         />
         <Stat
           label="Pending approvals"
-          value={o.counts.pendingApprovals}
-          source="not_tracked"
-          hint="Approval queue ships in Milestone 4"
+          value={formatNumber(o.counts.pendingApprovals)}
           icon={<ShieldCheck className="size-3.5" />}
         />
         <Stat
