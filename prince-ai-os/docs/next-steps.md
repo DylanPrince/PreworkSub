@@ -1,10 +1,11 @@
 # Next steps
 
-1. **You**: decide whether to add an `ANTHROPIC_API_KEY` (incurs usage charges, capped by the budget env
-   vars). Then run one task per executable agent and check output and cost.
-2. Agent Builder (create/version agents, sandbox run).
-3. AI Command Center v1 on top of `requestRun`.
-4. Approval system with backend enforcement.
-5. Business switcher, per-business budgets, task filters.
-6. Add remaining executable agents through the registry (each needs a schema, instructions, evaluation
-   checks, mock output and tests).
+1. **You**: add `ANTHROPIC_API_KEY` to the server environment and run the verification in
+   `docs/api-key-setup.md` before the first paid run.
+2. AI Command Center v1: chat that routes a request to an executable agent, shows the worst-case cost,
+   creates a task and follows the run. Reuses `requestRun`.
+3. Approval system with backend enforcement (`ApprovalRequest`, queue page, approve/reject with audit).
+   Required before any agent gets a tool that spends money, publishes, purchases or contacts customers.
+4. Workflows: multi-agent sequences on top of run records, with approval gates and loop limits.
+5. Executable configurations for the remaining 16 roster agents.
+6. Business switcher, per-business budgets, limits editable in Settings, task filters.

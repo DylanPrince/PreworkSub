@@ -3,7 +3,7 @@
  * agent-run jobs from BullMQ and executes them against the configured AI provider.
  */
 import { Worker, UnrecoverableError, type Job } from "bullmq";
-import { createProvider } from "@prince/ai";
+import { AnthropicProvider, MockProvider } from "@prince/ai";
 import { createRedisConnection, executeRun } from "@prince/core";
 import { getPrisma } from "@prince/database";
 import { QUEUES, getServerEnv, type AgentRunJobV1 } from "@prince/shared";
@@ -11,7 +11,11 @@ import { log } from "./log";
 
 const env = getServerEnv();
 const db = getPrisma();
-const provider = createProvider(env.AI_PROVIDER, env.ANTHROPIC_API_KEY);
+// Each run records the provider it was queued for. Mock (dry runs) is unavailable in production.
+const providers = {
+  anthropic: new AnthropicProvider(env.ANTHROPIC_API_KEY),
+  mock: env.APP_ENV === "production" ? undefined : new MockProvider(),
+};
 const connection = createRedisConnection(env.REDIS_URL);
 
 async function processJob(job: Job<AgentRunJobV1>) {
@@ -24,7 +28,7 @@ async function processJob(job: Job<AgentRunJobV1>) {
   const outcome = await executeRun(
     {
       db,
-      provider,
+      providers,
       budget: { dailyUsd: env.AI_DAILY_BUDGET_USD, monthlyUsd: env.AI_MONTHLY_BUDGET_USD },
     },
     job.data.runId,
@@ -52,8 +56,11 @@ worker.on("error", (err) => log.error("worker.error", { error: err.message }));
 worker.on("ready", () =>
   log.info("worker.ready", {
     queue: QUEUES.agentRuns,
-    provider: provider.name,
-    configured: provider.isConfigured(),
+    defaultProvider: env.AI_PROVIDER,
+    anthropicConfigured: providers.anthropic.isConfigured(),
+    mockAvailable: Boolean(providers.mock),
+    dailyBudgetUsd: env.AI_DAILY_BUDGET_USD,
+    monthlyBudgetUsd: env.AI_MONTHLY_BUDGET_USD,
   }),
 );
 

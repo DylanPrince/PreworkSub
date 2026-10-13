@@ -7,12 +7,21 @@ import {
   ValidationError,
   cancelRun,
   createBusiness,
+  createCustomAgent,
   createTask,
+  duplicateAgent,
+  restoreAgentVersion,
+  setAgentStatus,
+  startAgentTest,
+  updateAgentConfig,
   recordAudit,
   requestRun,
   retryRun,
+  type AgentConfigInput,
+  type CreateAgentInput,
   type CreateBusinessInput,
   type CreateTaskInput,
+  type TestRunInput,
 } from "@prince/core";
 import { db, env, getRunQueue } from "./server";
 import { requireUser } from "./session";
@@ -60,10 +69,13 @@ export async function createTaskAction(
 export async function runTaskAction(
   taskId: string,
   idempotencyKey: string,
+  provider?: "anthropic" | "mock",
 ): Promise<ActionResult<{ runId: string }>> {
   const user = await requireUser();
   return run(async () => {
-    const r = await requestRun(db, getRunQueue(), user.id, taskId, { idempotencyKey });
+    if (provider !== undefined && provider !== "anthropic" && provider !== "mock")
+      throw new ValidationError("Unknown provider");
+    const r = await requestRun(db, getRunQueue(), user.id, taskId, { idempotencyKey, provider });
     revalidatePath(`/tasks/${taskId}`);
     return { runId: r.id };
   });
@@ -109,5 +121,91 @@ export async function testAnthropicAction(): Promise<ActionResult<{ message: str
         ? `Connected. ${result.displayName} is available.`
         : `Error: ${result.error}`,
     };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Agent Builder
+// ---------------------------------------------------------------------------
+
+function revalidateAgents(agentId?: string) {
+  revalidatePath("/agents");
+  revalidatePath("/agent-builder");
+  if (agentId) {
+    revalidatePath(`/agents/${agentId}`);
+    revalidatePath(`/agent-builder/${agentId}`);
+  }
+}
+
+export async function createAgentAction(
+  input: CreateAgentInput,
+): Promise<ActionResult<{ agentId: string }>> {
+  const user = await requireUser();
+  return run(async () => {
+    const agent = await createCustomAgent(db, user.id, input);
+    revalidateAgents();
+    return { agentId: agent.id };
+  });
+}
+
+export async function updateAgentAction(
+  agentId: string,
+  expectedVersion: number,
+  input: AgentConfigInput,
+): Promise<ActionResult<{ version: number }>> {
+  const user = await requireUser();
+  return run(async () => {
+    const r = await updateAgentConfig(db, user.id, agentId, input, expectedVersion);
+    revalidateAgents(agentId);
+    return r;
+  });
+}
+
+export async function restoreAgentVersionAction(
+  agentId: string,
+  version: number,
+): Promise<ActionResult<{ version: number }>> {
+  const user = await requireUser();
+  return run(async () => {
+    const r = await restoreAgentVersion(db, user.id, agentId, version);
+    revalidateAgents(agentId);
+    return r;
+  });
+}
+
+export async function setAgentStatusAction(
+  agentId: string,
+  status: "active" | "disabled" | "archived",
+): Promise<ActionResult> {
+  const user = await requireUser();
+  return run(async () => {
+    await setAgentStatus(db, user.id, agentId, status);
+    revalidateAgents(agentId);
+    return undefined;
+  });
+}
+
+export async function duplicateAgentAction(
+  agentId: string,
+  businessId: string,
+): Promise<ActionResult<{ agentId: string }>> {
+  const user = await requireUser();
+  return run(async () => {
+    const agent = await duplicateAgent(db, user.id, agentId, businessId);
+    revalidateAgents();
+    return { agentId: agent.id };
+  });
+}
+
+export async function testAgentAction(
+  agentId: string,
+  input: TestRunInput,
+): Promise<ActionResult<{ taskId: string }>> {
+  const user = await requireUser();
+  return run(async () => {
+    const { task } = await startAgentTest(db, getRunQueue(), user.id, agentId, input);
+    revalidatePath(`/agent-builder/${agentId}`);
+    revalidatePath("/tasks");
+    return { taskId: task.id };
   });
 }

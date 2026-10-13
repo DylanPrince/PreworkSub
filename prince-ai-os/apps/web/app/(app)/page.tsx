@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { Suspense } from "react";
-import { getOverview, listBusinesses } from "@prince/core";
+import { getAiStatus, getOverview, listBusinesses, runPolicyFromEnv } from "@prince/core";
 import { formatDuration, formatNumber, formatUsd } from "@prince/shared";
 import { EmptyState } from "@/components/common/empty-state";
 import { PageHeader } from "@/components/common/page-header";
@@ -41,27 +41,38 @@ export default async function OverviewPage({
 }) {
   const user = await requireUser();
   const sp = await searchParams;
-  const [o, businesses] = await Promise.all([
+  const [o, businesses, ai] = await Promise.all([
     getOverview(db, user.id, { businessId: sp.business || undefined, days: Number(sp.days) || 14 }),
     listBusinesses(db, user.id),
+    getAiStatus(db, runPolicyFromEnv()),
   ]);
 
   const alerts: { tone: "warning" | "danger"; text: string }[] = [];
-  if (env.AI_PROVIDER === "anthropic" && !env.ANTHROPIC_API_KEY)
+  if (ai.mode === "not_configured")
     alerts.push({
       tone: "warning",
-      text: "Claude API key is not configured. Agent runs will fail with “requires configuration” until it is set.",
+      text: "Claude API key is not configured. Paid runs are refused until it is set; dry runs still work.",
     });
-  if (env.AI_PROVIDER === "mock")
+  if (ai.mode === "mock")
     alerts.push({
       tone: "warning",
-      text: "Mock AI provider is active. Run outputs are placeholders, not real analysis.",
+      text: "Mock mode is the default. Runs produce labelled placeholder output, not real analysis.",
     });
-  if (o.ai.spendTodayUsd >= env.AI_DAILY_BUDGET_USD * 0.8)
-    alerts.push({
-      tone: "danger",
-      text: `AI spend today is ${formatUsd(o.ai.spendTodayUsd)} of the ${formatUsd(env.AI_DAILY_BUDGET_USD)} daily limit.`,
-    });
+  for (const [name, w] of [
+    ["daily", ai.budget.day],
+    ["monthly", ai.budget.month],
+  ] as const) {
+    if (w.reached)
+      alerts.push({
+        tone: "danger",
+        text: `The ${name} AI spending limit (${formatUsd(w.limitUsd)}) is reached. New paid runs are refused.`,
+      });
+    else if (w.committedUsd >= w.limitUsd * 0.8)
+      alerts.push({
+        tone: "warning",
+        text: `AI spend is ${formatUsd(w.committedUsd)} of the ${formatUsd(w.limitUsd)} ${name} limit.`,
+      });
+  }
   if (o.counts.failedRuns > 0)
     alerts.push({
       tone: "warning",

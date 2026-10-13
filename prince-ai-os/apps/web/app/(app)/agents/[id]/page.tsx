@@ -1,11 +1,13 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { NotFoundError, getAgent } from "@prince/core";
+import { NotFoundError, getAgent, listManageableBusinesses } from "@prince/core";
 import { formatDuration, formatUsd } from "@prince/shared";
+import { DuplicateAgentButton } from "@/components/agent-builder/agent-controls";
 import { EmptyState } from "@/components/common/empty-state";
 import { PageHeader } from "@/components/common/page-header";
 import { ProviderBadge, StatusBadge } from "@/components/common/status-badge";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { db } from "@/lib/server";
 import { requireUser } from "@/lib/session";
@@ -22,6 +24,9 @@ export default async function AgentPage({ params }: { params: Promise<{ id: stri
     throw e;
   }
   const { agent, runs } = data;
+  const manageable = await listManageableBusinesses(db, user.id);
+  const isCustom = agent.templateKey === null && agent.businessId !== null;
+  const canEdit = isCustom && manageable.some((b) => b.id === agent.businessId);
   const current = agent.versions.find((v) => v.version === agent.currentVersion);
   const done = runs.filter((r) => r.status === "succeeded" || r.status === "failed");
   const successRate = done.length
@@ -33,7 +38,18 @@ export default async function AgentPage({ params }: { params: Promise<{ id: stri
       <PageHeader
         title={agent.name}
         description={agent.description}
-        actions={<StatusBadge status={agent.status} />}
+        actions={
+          <>
+            <StatusBadge status={agent.status} />
+            {canEdit ? (
+              <Button asChild size="sm">
+                <Link href={`/agent-builder/${agent.id}`}>Manage in Agent Builder</Link>
+              </Button>
+            ) : (
+              <DuplicateAgentButton agentId={agent.id} businesses={manageable} />
+            )}
+          </>
+        }
       />
       <div className="grid gap-4 lg:grid-cols-3">
         <Card className="lg:col-span-2">
@@ -150,12 +166,17 @@ export default async function AgentPage({ params }: { params: Promise<{ id: stri
                         <Link href={`/tasks/${r.task.id}`} className="hover:underline">
                           {r.task.title}
                         </Link>
+                        {r.task.kind === "test" && (
+                          <Badge className="ml-1.5" tone="neutral">
+                            test
+                          </Badge>
+                        )}
                       </td>
                       <td className="py-2 pr-4 text-muted-foreground">{r.business.name}</td>
                       <td className="py-2 pr-4">
                         <span className="flex items-center gap-1.5">
                           <StatusBadge status={r.status} />
-                          {r.provider === "mock" && <ProviderBadge provider="mock" />}
+                          <ProviderBadge provider={r.provider} />
                         </span>
                       </td>
                       <td className="py-2 pr-4 font-mono text-xs">
@@ -177,8 +198,9 @@ export default async function AgentPage({ params }: { params: Promise<{ id: stri
         </CardContent>
       </Card>
       <p className="text-xs text-muted-foreground">
-        <Badge className="mr-1">Note</Badge> Editing configuration and creating custom agents arrive
-        with the Agent Builder (Milestone 3). Every change will create a new immutable version.
+        {isCustom
+          ? "Custom agent. Every configuration change is saved as a new immutable version."
+          : "Built-in agent: read-only. Duplicate it into a business to customise instructions, model and limits."}
       </p>
     </div>
   );

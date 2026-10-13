@@ -36,3 +36,26 @@ create uniquely named records. They never reset a database.
 
 Every sidebar item has a page. Sections scheduled for later milestones show their scope and milestone,
 never sample data. Metrics that are not tracked render "Not tracked yet", not zero.
+
+### D8 — Spend reservations under an advisory lock
+
+Before a paid attempt the worker reserves its worst-case cost in `AgentRun.reservedUsd` inside a
+transaction that holds `pg_advisory_xact_lock`. Committed spend is actual cost plus open reservations,
+so concurrent workers serialise on the budget check without a separate ledger table. Mock runs skip
+the reservation because they cost nothing.
+
+### D9 — Provider chosen per run, pinned at queue time
+
+`AgentRun.provider` is set when the run is requested (`anthropic` or `mock`), and the worker executes
+on that provider. `AI_PROVIDER` only sets the default. This lets the owner dry-run a configuration for
+free while Claude is the default, and prevents a config change from silently switching queued work.
+
+### D10 — Output contracts decouple validation from templates
+
+Schema, mock output and evaluation checks live together per output contract. Templates and custom
+agents both reference a contract key, so custom agents get the same validation without code changes.
+
+### D11 — Built-in agents are read-only; customise by duplicating
+
+Shared agents serve every business and there is no instance-admin role yet, so editing them would let
+one business change another's agents. Agent Builder copies them into a business instead.

@@ -1,8 +1,10 @@
+import { getAiStatus, runPolicyFromEnv } from "@prince/core";
+import { AiStatusPanel } from "@/components/common/ai-status";
 import { PageHeader } from "@/components/common/page-header";
 import { TestAnthropicButton } from "@/components/integrations/test-anthropic";
 import { Badge } from "@/components/ui/badge";
-import { Card } from "@/components/ui/card";
-import { env } from "@/lib/server";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { db, env } from "@/lib/server";
 import { requireUser } from "@/lib/session";
 
 export const metadata = { title: "Integrations" };
@@ -23,13 +25,14 @@ const TONE: Record<State, "success" | "neutral" | "warning" | "danger"> = {
  */
 export default async function IntegrationsPage() {
   await requireUser();
+  const ai = await getAiStatus(db, runPolicyFromEnv());
   const rows: { name: string; purpose: string; state: State; note: string }[] = [
     {
       name: "Anthropic (Claude API)",
       purpose: "Agent execution",
       state: env.ANTHROPIC_API_KEY ? "CONNECTED" : "REQUIRES CONFIGURATION",
       note: env.ANTHROPIC_API_KEY
-        ? "API key present in server environment. Use Test connection to verify it is accepted."
+        ? "API key present in server environment. Test connection checks it is accepted without generating tokens."
         : "Set ANTHROPIC_API_KEY in the server environment (never in the browser). Usage is billed by Anthropic.",
     },
     {
@@ -88,6 +91,19 @@ export default async function IntegrationsPage() {
         title="Integrations"
         description="Connection status comes from server configuration and live checks. Credentials never reach the browser."
       />
+      <Card className="mb-4">
+        <CardHeader>
+          <div>
+            <CardTitle>AI provider and spending protection</CardTitle>
+            <CardDescription>
+              Live state from the server. The API key is never displayed or sent to the browser.
+            </CardDescription>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <AiStatusPanel status={ai} />
+        </CardContent>
+      </Card>
       <Card className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="border-b border-border text-left text-xs text-muted-foreground">
@@ -121,8 +137,8 @@ export default async function IntegrationsPage() {
       </Card>
       {env.AI_PROVIDER === "mock" && (
         <p className="mt-4 text-xs text-warning">
-          AI_PROVIDER=mock is set: the worker uses the local mock provider regardless of the
-          Anthropic key.
+          AI_PROVIDER=mock is set, so runs default to the mock provider. With a key configured you
+          can still choose a paid Claude run per task.
         </p>
       )}
     </div>

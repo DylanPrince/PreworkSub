@@ -1,12 +1,40 @@
 import { z } from "zod";
 import type { PrismaClient, RunStatus, TaskStatus } from "@prince/database";
 import { getServerEnv } from "@prince/shared";
-import { getImplementedTemplate } from "@prince/agents";
+import { getContract } from "@prince/agents";
+import type { ProviderName } from "@prince/ai";
 import { recordAudit } from "./audit";
 import { accessibleBusinessIds, requireBusinessRole } from "./access";
 import { ForbiddenError, NotFoundError, ValidationError } from "./errors";
 import { getCurrentVersion } from "./agents";
 import type { RunQueue } from "./run-queue";
+import { getBudgetStatus, type BudgetLimits } from "./budget";
+
+/** Server-side rules for which provider a run may use. Built from env in the app and worker. */
+export interface RunPolicy {
+  defaultProvider: ProviderName;
+  anthropicConfigured: boolean;
+  /** Mock (dry) runs are refused when APP_ENV=production. */
+  allowMock: boolean;
+  budget: BudgetLimits;
+}
+
+export function runPolicyFromEnv(): RunPolicy {
+  const env = getServerEnv();
+  return {
+    defaultProvider: env.AI_PROVIDER,
+    anthropicConfigured: Boolean(env.ANTHROPIC_API_KEY),
+    allowMock: env.APP_ENV !== "production",
+    budget: { dailyUsd: env.AI_DAILY_BUDGET_USD, monthlyUsd: env.AI_MONTHLY_BUDGET_USD },
+  };
+}
+
+export interface RequestRunOptions {
+  idempotencyKey?: string;
+  /** "mock" requests a free dry run; omitted uses the configured default provider. */
+  provider?: ProviderName;
+  policy?: RunPolicy;
+}
 
 export const createTaskInput = z.object({
   businessId: z.string().min(1, "Choose a business"),
@@ -19,6 +47,7 @@ export const createTaskInput = z.object({
     .max(20_000),
   runNow: z.boolean().default(false),
   idempotencyKey: z.string().uuid().optional(),
+  kind: z.enum(["standard", "test"]).default("standard"),
 });
 export type CreateTaskInput = z.input<typeof createTaskInput>;
 
@@ -27,6 +56,7 @@ export async function createTask(
   queue: RunQueue,
   userId: string,
   raw: CreateTaskInput,
+  runOpts: Omit<RequestRunOptions, "idempotencyKey"> = {},
 ) {
   const parsed = createTaskInput.safeParse(raw);
   if (!parsed.success)
@@ -34,7 +64,11 @@ export async function createTask(
   const input = parsed.data;
   await requireBusinessRole(db, userId, input.businessId, "member");
   const agent = await db.agent.findUnique({ where: { id: input.agentId } });
-  if (!agent || (agent.businessId !== null && agent.businessId !== input.businessId)) {
+  if (
+    !agent ||
+    agent.status === "archived" ||
+    (agent.businessId !== null && agent.businessId !== input.businessId)
+  ) {
     throw new ValidationError("Invalid task", {
       agentId: ["This agent is not available to the selected business"],
     });
@@ -47,6 +81,7 @@ export async function createTask(
         agentId: input.agentId,
         title: input.title,
         instructions: input.instructions,
+        kind: input.kind,
         createdById: userId,
       },
     });
@@ -63,7 +98,10 @@ export async function createTask(
   });
 
   const run = input.runNow
-    ? await requestRun(db, queue, userId, task.id, { idempotencyKey: input.idempotencyKey })
+    ? await requestRun(db, queue, userId, task.id, {
+        ...runOpts,
+        idempotencyKey: input.idempotencyKey,
+      })
     : null;
   return { task, run };
 }
@@ -115,7 +153,7 @@ export async function requestRun(
   queue: RunQueue,
   userId: string,
   taskId: string,
-  opts: { idempotencyKey?: string } = {},
+  opts: RequestRunOptions = {},
 ) {
   const task = await db.task.findUnique({ where: { id: taskId }, include: { agent: true } });
   if (!task) throw new NotFoundError("Task");
@@ -129,8 +167,10 @@ export async function requestRun(
     return existing;
   }
 
-  if (task.agent.status !== "active") throw new ValidationError(`${task.agent.name} is disabled`);
-  if (!getImplementedTemplate(task.agent.templateKey)) {
+  if (task.agent.status !== "active")
+    throw new ValidationError(`${task.agent.name} is ${task.agent.status}`);
+  const version = await getCurrentVersion(db, task.agentId);
+  if (!getContract(version.outputSchemaKey)) {
     throw new ValidationError(`${task.agent.name} does not have an executable configuration yet`);
   }
   const active = await db.agentRun.count({
@@ -138,8 +178,28 @@ export async function requestRun(
   });
   if (active > 0) throw new ValidationError("This task already has a run in progress");
 
-  const version = await getCurrentVersion(db, task.agentId);
-  const env = getServerEnv();
+  const policy = opts.policy ?? runPolicyFromEnv();
+  const provider = opts.provider ?? policy.defaultProvider;
+  if (provider === "mock" && !policy.allowMock) {
+    throw new ValidationError("Dry runs with the mock provider are disabled in production");
+  }
+  if (provider === "anthropic") {
+    if (!policy.anthropicConfigured) {
+      throw new ValidationError(
+        "Claude is not configured: add ANTHROPIC_API_KEY to the server environment, or start a dry run.",
+      );
+    }
+    // Early refusal so nothing is queued while a limit is reached. The worker re-checks
+    // atomically (with reservations) right before calling the API.
+    const budget = await getBudgetStatus(db, policy.budget);
+    if (budget.blocked) {
+      const which = budget.day.reached ? "Daily" : "Monthly";
+      throw new ValidationError(
+        `${which} AI spending limit reached. Paid runs resume when the limit resets or is raised.`,
+      );
+    }
+  }
+
   const run = await db.$transaction(async (tx) => {
     const r = await tx.agentRun.create({
       data: {
@@ -148,12 +208,12 @@ export async function requestRun(
         agentVersion: version.version,
         businessId: task.businessId,
         idempotencyKey,
-        provider: env.AI_PROVIDER,
-        model: env.AI_PROVIDER === "mock" ? "mock" : version.model,
+        provider,
+        model: provider === "mock" ? "mock" : version.model,
         events: {
           create: {
             type: "queued",
-            message: `Queued by user (agent v${version.version}, ${env.AI_PROVIDER})`,
+            message: `Queued by user (agent v${version.version}, ${provider === "mock" ? "dry run on mock provider" : `Claude ${version.model}`})`,
           },
         },
       },
@@ -243,11 +303,20 @@ export async function cancelRun(db: PrismaClient, queue: RunQueue, userId: strin
 }
 
 /** Retrying creates a new run so history keeps every attempt's cost and output. */
-export async function retryRun(db: PrismaClient, queue: RunQueue, userId: string, runId: string) {
+export async function retryRun(
+  db: PrismaClient,
+  queue: RunQueue,
+  userId: string,
+  runId: string,
+  policy?: RunPolicy,
+) {
   const run = await db.agentRun.findUnique({ where: { id: runId } });
   if (!run) throw new NotFoundError("Run");
   if (run.status !== "failed" && run.status !== "cancelled") {
     throw new ValidationError("Only failed or cancelled runs can be retried");
   }
-  return requestRun(db, queue, userId, run.taskId);
+  return requestRun(db, queue, userId, run.taskId, {
+    provider: run.provider as ProviderName,
+    policy,
+  });
 }

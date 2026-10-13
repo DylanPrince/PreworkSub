@@ -5,6 +5,7 @@ import { formatUsd } from "@prince/shared";
 import { PageHeader } from "@/components/common/page-header";
 import { StatusBadge } from "@/components/common/status-badge";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { db } from "@/lib/server";
 import { requireUser } from "@/lib/session";
@@ -22,7 +23,12 @@ export default async function AgentsPage() {
     <div className="space-y-8">
       <PageHeader
         title="Agent Workforce"
-        description="Application-managed AI agents with versioned configuration, budgets and run history. Planned agents are defined in the registry but cannot run yet."
+        description="Application-managed AI agents with versioned configuration, budgets and run history. Planned agents are defined in the registry but have no built-in configuration yet."
+        actions={
+          <Button asChild variant="secondary">
+            <Link href="/agent-builder">Open Agent Builder</Link>
+          </Button>
+        }
       />
       {divisions.map((division) => {
         const live = agents.filter((a) => a.division === division);
@@ -42,7 +48,10 @@ export default async function AgentsPage() {
                     <Card className="h-full p-4 transition-colors hover:border-primary/50">
                       <div className="flex items-start justify-between gap-2">
                         <p className="font-medium">{a.name}</p>
-                        <StatusBadge status={a.status} />
+                        <span className="flex items-center gap-1">
+                          {a.templateKey === null && <Badge tone="info">Custom</Badge>}
+                          <StatusBadge status={a.status} />
+                        </span>
                       </div>
                       <p className="mt-0.5 text-xs text-muted-foreground">
                         {a.specialization} · v{a.currentVersion} ·{" "}

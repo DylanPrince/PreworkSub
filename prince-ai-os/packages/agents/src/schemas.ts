@@ -76,11 +76,22 @@ export const financialAnalysisSchema = z.object({
   recommendation: z.string().describe("Advisory only; never an instruction to move money"),
 });
 
+/** General-purpose contract for custom agents built in Agent Builder. */
+export const generalReportSchema = z.object({
+  title: z.string(),
+  summary: z.string(),
+  sections: z.array(z.object({ heading: z.string(), content: z.string() })),
+  recommendations: z.array(z.string()).describe("Advisory recommendations for the owner"),
+  assumptions: z.array(z.string()).describe("Assumptions made where inputs were missing"),
+  openQuestions: z.array(z.string()).describe("Questions only the owner can answer"),
+});
+
 export const OUTPUT_SCHEMAS = {
   "executive-plan.v1": executivePlanSchema,
   "market-research.v1": marketResearchSchema,
   "copywriting.v1": copywritingSchema,
   "financial-analysis.v1": financialAnalysisSchema,
+  "general-report.v1": generalReportSchema,
 } as const;
 
 export type OutputSchemaKey = keyof typeof OUTPUT_SCHEMAS;

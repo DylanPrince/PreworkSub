@@ -1,20 +1,27 @@
 # Known issues and limitations
 
 - **No real Claude run has been executed** in this environment: no `ANTHROPIC_API_KEY` is configured.
-  The Anthropic provider is unit-tested for configuration and error mapping only. First real run should
-  be watched (structured output parsing, cost figures).
+  The provider is tested through the real SDK against a fake HTTP layer. Watch the first real run
+  (structured output, token counts, cost) as described in `docs/api-key-setup.md`.
+- Spending limits are application safeguards, not a billing cap: other uses of the same key, price
+  table drift and estimated costs for aborted calls can make the Anthropic bill differ. Set a Console
+  spend limit as the hard cap.
+- Pre-flight cost estimates use a character-based token estimate with 25% headroom plus 500 tokens.
+  A prompt that tokenizes much worse than 4 characters per token could exceed its reservation; the
+  actual cost is still recorded.
+- If a worker process dies mid-call, the run's reservation stays counted (conservatively) until the
+  job is picked up again after its lock expires (60 s) and re-executed.
+- Budget windows attribute a run to the UTC day and month in which its latest attempt started.
 - Agents have no tools; outputs are analysis/drafts only. Market Research cannot browse the web and
   says so in its `limitations` field.
-- Cost of automatic retry attempts is stored in `retry_scheduled` event data, not summed into the run's
-  `costUsd`. Budget checks therefore slightly under-count spend from retried attempts.
-- Budget checks are not atomic across concurrent workers: two runs started at the same moment can both
-  pass a nearly exhausted limit (bounded by one run's per-run budget each).
 - Cancellation of a running job is cooperative (Postgres polled every second); BullMQ job is not
   force-killed.
-- `costIsEstimate` is never set yet (all priced models have table entries).
 - Overview "Pending approvals", "Scheduled tasks", revenue and profit show "Not tracked yet" until
   M4/M5.
-- Agent configuration cannot be edited in the UI yet (Agent Builder, M3).
+- Built-in (shared) agents cannot be edited or disabled in the UI; duplicate them into a business
+  instead. There is no instance-admin role yet.
+- Agent Builder offers vetted output contracts only; free-form custom JSON schemas are not supported.
+- Spending limits are set through environment variables, not in the UI.
 - Next.js dev server may full-reload once when a route first compiles; E2E tests therefore run against
   a production build.
 - Test databases accumulate rows (suites are non-destructive by design); drop and recreate them manually

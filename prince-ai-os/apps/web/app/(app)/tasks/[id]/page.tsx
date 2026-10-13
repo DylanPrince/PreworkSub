@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getImplementedTemplate } from "@prince/agents";
-import { ForbiddenError, NotFoundError, getTask } from "@prince/core";
+import { getContract } from "@prince/agents";
+import { ForbiddenError, NotFoundError, getCurrentVersion, getTask } from "@prince/core";
 import { formatDuration, formatNumber, formatUsd } from "@prince/shared";
 import { EmptyState } from "@/components/common/empty-state";
 import { PageHeader } from "@/components/common/page-header";
@@ -11,6 +11,7 @@ import { StructuredOutput } from "@/components/tasks/structured-output";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { db } from "@/lib/server";
+import { getRunModes } from "@/lib/run-modes";
 import { requireUser } from "@/lib/session";
 import { relativeTime } from "@/lib/utils";
 
@@ -26,8 +27,8 @@ export default async function TaskPage({ params }: { params: Promise<{ id: strin
   }
   const latest = task.runs[0];
   const hasActive = task.runs.some((r) => r.status === "queued" || r.status === "running");
-  const executable =
-    task.agent.status === "active" && !!getImplementedTemplate(task.agent.templateKey);
+  const [version, modes] = await Promise.all([getCurrentVersion(db, task.agentId), getRunModes()]);
+  const executable = task.agent.status === "active" && !!getContract(version.outputSchemaKey);
 
   return (
     <div className="space-y-6">
@@ -37,7 +38,7 @@ export default async function TaskPage({ params }: { params: Promise<{ id: strin
         actions={
           <>
             <StatusBadge status={task.status} />
-            <RunTaskButton taskId={task.id} disabled={hasActive || !executable} />
+            <RunTaskButton taskId={task.id} modes={modes} disabled={hasActive || !executable} />
           </>
         }
       />

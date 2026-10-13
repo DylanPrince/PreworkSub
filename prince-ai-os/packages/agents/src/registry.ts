@@ -1,5 +1,4 @@
-import type { z } from "zod";
-import { OUTPUT_SCHEMAS, type OutputSchemaKey } from "./schemas";
+import type { OutputSchemaKey } from "./schemas";
 
 export type Division =
   | "Executive"
@@ -9,6 +8,15 @@ export type Division =
   | "Development"
   | "Business Operations";
 
+export const DIVISIONS: Division[] = [
+  "Executive",
+  "Research",
+  "Marketing",
+  "Content",
+  "Development",
+  "Business Operations",
+];
+
 interface TemplateBase {
   key: string;
   name: string;
@@ -17,7 +25,7 @@ interface TemplateBase {
   specialization: string;
 }
 
-/** A roster entry that has a real prompt, output contract, limits and evaluation checks. */
+/** A roster entry with a real prompt, output contract and limits (checks live in contracts.ts). */
 export interface ImplementedAgentTemplate extends TemplateBase {
   implemented: true;
   instructions: string;
@@ -28,10 +36,6 @@ export interface ImplementedAgentTemplate extends TemplateBase {
   budgetUsdPerRun: number;
   timeoutMs: number;
   maxAttempts: number;
-  /** Deterministic, obviously-labelled output for the mock provider and sandbox tests. */
-  mockOutput: (task: { title: string; instructions: string }) => unknown;
-  /** Semantic checks beyond the schema. Returns human-readable problems; empty = pass. */
-  evaluate: (output: unknown) => string[];
 }
 
 /** A roster entry defined in the registry but not yet executable. Shown as "Planned" in the UI. */
@@ -40,16 +44,6 @@ export interface PlannedAgentTemplate extends TemplateBase {
 }
 
 export type AgentTemplate = ImplementedAgentTemplate | PlannedAgentTemplate;
-
-const MOCK_NOTE = "[MOCK OUTPUT — generated locally without an AI model; not real analysis]";
-
-function parse<K extends OutputSchemaKey>(
-  key: K,
-  output: unknown,
-): z.infer<(typeof OUTPUT_SCHEMAS)[K]> | null {
-  const r = OUTPUT_SCHEMAS[key].safeParse(output);
-  return r.success ? (r.data as z.infer<(typeof OUTPUT_SCHEMAS)[K]>) : null;
-}
 
 const executiveCoordinator: ImplementedAgentTemplate = {
   implemented: true,
@@ -71,41 +65,6 @@ const executiveCoordinator: ImplementedAgentTemplate = {
   budgetUsdPerRun: 0.25,
   timeoutMs: 120_000,
   maxAttempts: 3,
-  mockOutput: (task) => ({
-    objective: `${MOCK_NOTE} ${task.title}`,
-    summary: `${MOCK_NOTE} Placeholder plan for local testing.`,
-    workstreams: [
-      {
-        title: "Research",
-        owner: "Market Research Agent",
-        description: "Mock research workstream",
-        dependsOn: [],
-        requiresHumanApproval: false,
-      },
-      {
-        title: "Financial check",
-        owner: "Financial Analyst",
-        description: "Mock financial review",
-        dependsOn: ["Research"],
-        requiresHumanApproval: false,
-      },
-    ],
-    risks: ["Mock output: no real analysis performed"],
-    decisionsForOwner: ["Whether to configure a real AI provider"],
-  }),
-  evaluate: (output) => {
-    const o = parse("executive-plan.v1", output);
-    if (!o) return ["Output does not match executive-plan.v1"];
-    const problems: string[] = [];
-    if (o.workstreams.length === 0) problems.push("Plan has no workstreams");
-    const titles = new Set(o.workstreams.map((w) => w.title));
-    for (const w of o.workstreams) {
-      for (const d of w.dependsOn)
-        if (!titles.has(d)) problems.push(`"${w.title}" depends on unknown workstream "${d}"`);
-      if (w.dependsOn.includes(w.title)) problems.push(`"${w.title}" depends on itself`);
-    }
-    return problems;
-  },
 };
 
 const marketResearch: ImplementedAgentTemplate = {
@@ -127,25 +86,6 @@ const marketResearch: ImplementedAgentTemplate = {
   budgetUsdPerRun: 0.4,
   timeoutMs: 180_000,
   maxAttempts: 3,
-  mockOutput: (task) => ({
-    question: task.title,
-    summary: `${MOCK_NOTE} No research was performed.`,
-    findings: [
-      { claim: "Mock finding", basis: "assumption", confidence: "low", needsVerification: true },
-    ],
-    opportunities: ["Mock opportunity"],
-    risks: ["Mock risk"],
-    suggestedNextSteps: ["Configure ANTHROPIC_API_KEY to run real research"],
-    limitations: "Mock provider: nothing here is real.",
-  }),
-  evaluate: (output) => {
-    const o = parse("market-research.v1", output);
-    if (!o) return ["Output does not match market-research.v1"];
-    const problems: string[] = [];
-    if (o.findings.length === 0) problems.push("Report has no findings");
-    if (!o.limitations.trim()) problems.push("Report must state its limitations");
-    return problems;
-  },
 };
 
 const copywriter: ImplementedAgentTemplate = {
@@ -167,24 +107,6 @@ const copywriter: ImplementedAgentTemplate = {
   budgetUsdPerRun: 0.25,
   timeoutMs: 120_000,
   maxAttempts: 3,
-  mockOutput: (task) => ({
-    brief: task.title,
-    audience: "Mock audience",
-    variants: [
-      {
-        channel: "ad",
-        headline: `${MOCK_NOTE}`,
-        body: "Mock body copy.",
-        callToAction: "Learn more",
-      },
-    ],
-    complianceNotes: ["Mock output: not for publication"],
-  }),
-  evaluate: (output) => {
-    const o = parse("copywriting.v1", output);
-    if (!o) return ["Output does not match copywriting.v1"];
-    return o.variants.length === 0 ? ["No copy variants produced"] : [];
-  },
 };
 
 const financialAnalyst: ImplementedAgentTemplate = {
@@ -205,23 +127,6 @@ const financialAnalyst: ImplementedAgentTemplate = {
   budgetUsdPerRun: 0.25,
   timeoutMs: 120_000,
   maxAttempts: 3,
-  mockOutput: (task) => ({
-    question: task.title,
-    summary: `${MOCK_NOTE} No figures were analysed.`,
-    calculations: [
-      { label: "Mock margin", formula: "(price - cost) / price", result: "n/a (mock)" },
-    ],
-    assumptions: ["Mock output"],
-    missingData: ["All real figures"],
-    recommendation: "Advisory placeholder from the mock provider.",
-  }),
-  evaluate: (output) => {
-    const o = parse("financial-analysis.v1", output);
-    if (!o) return ["Output does not match financial-analysis.v1"];
-    return /\b(transfer|wire|pay now|send payment)\b/i.test(o.recommendation)
-      ? ["Recommendation reads as a payment instruction; financial output must stay advisory"]
-      : [];
-  },
 };
 
 function planned(

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { AGENT_TEMPLATES, IMPLEMENTED_TEMPLATES, getImplementedTemplate } from "./registry";
-import { OUTPUT_SCHEMAS } from "./schemas";
+import { OUTPUT_SCHEMAS, type OutputSchemaKey } from "./schemas";
+import { OUTPUT_CONTRACTS, getContract } from "./contracts";
 import { buildSystemPrompt, buildUserPrompt } from "./prompt";
 
 describe("agent registry", () => {
@@ -22,18 +23,30 @@ describe("agent registry", () => {
     expect(getImplementedTemplate("seo")).toBeUndefined();
   });
 
-  it.each(IMPLEMENTED_TEMPLATES.map((t) => [t.key, t] as const))(
-    "%s mock output satisfies its schema and evaluation",
-    (_k, t) => {
-      const out = t.mockOutput({ title: "T", instructions: "I" });
-      expect(OUTPUT_SCHEMAS[t.outputSchemaKey].safeParse(out).success).toBe(true);
-      expect(t.evaluate(out)).toEqual([]);
+  it("every template uses a registered output contract", () => {
+    for (const t of IMPLEMENTED_TEMPLATES) expect(getContract(t.outputSchemaKey)).toBeDefined();
+  });
+});
+
+describe("output contracts", () => {
+  it("covers every output schema", () => {
+    expect(Object.keys(OUTPUT_CONTRACTS).sort()).toEqual(Object.keys(OUTPUT_SCHEMAS).sort());
+    expect(getContract("nope.v1")).toBeUndefined();
+  });
+
+  it.each(Object.keys(OUTPUT_CONTRACTS) as OutputSchemaKey[])(
+    "%s mock output satisfies its schema and evaluation, and is labelled as mock",
+    (key) => {
+      const c = OUTPUT_CONTRACTS[key];
+      const out = c.mockOutput({ title: "T", instructions: "I" });
+      expect(OUTPUT_SCHEMAS[key].safeParse(out).success).toBe(true);
+      expect(c.evaluate(out)).toEqual([]);
+      expect(JSON.stringify(out)).toMatch(/mock/i);
     },
   );
 
   it("executive plans with unknown or self dependencies fail evaluation", () => {
-    const t = getImplementedTemplate("executive-coordinator")!;
-    const problems = t.evaluate({
+    const problems = OUTPUT_CONTRACTS["executive-plan.v1"].evaluate({
       objective: "o",
       summary: "s",
       workstreams: [
@@ -53,7 +66,6 @@ describe("agent registry", () => {
   });
 
   it("financial output that reads as a payment instruction fails evaluation", () => {
-    const t = getImplementedTemplate("financial-analyst")!;
     const out = {
       question: "q",
       summary: "s",
@@ -62,7 +74,7 @@ describe("agent registry", () => {
       missingData: [],
       recommendation: "Wire $500 to the supplier",
     };
-    expect(t.evaluate(out)).not.toEqual([]);
+    expect(OUTPUT_CONTRACTS["financial-analysis.v1"].evaluate(out)).not.toEqual([]);
   });
 });
 

@@ -7,5 +7,7 @@ export * from "./tasks";
 export * from "./budget";
 export * from "./executor";
 export * from "./metrics";
+export * from "./ai-status";
+export * from "./agent-builder";
 export type { RunQueue } from "./run-queue";
 export { BullRunQueue, createAgentRunQueue, createRedisConnection } from "./bullmq";

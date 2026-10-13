@@ -1,12 +1,20 @@
 import type { PrismaClient } from "@prince/database";
+import { getContract } from "@prince/agents";
 import { accessibleBusinessIds } from "./access";
 import { NotFoundError } from "./errors";
 
 /** Agents a user can see: shared agents plus agents scoped to one of their businesses. */
-export async function listAgents(db: PrismaClient, userId: string) {
+export async function listAgents(
+  db: PrismaClient,
+  userId: string,
+  opts: { includeArchived?: boolean } = {},
+) {
   const businessIds = await accessibleBusinessIds(db, userId);
   const agents = await db.agent.findMany({
-    where: { OR: [{ businessId: null }, { businessId: { in: businessIds } }] },
+    where: {
+      OR: [{ businessId: null }, { businessId: { in: businessIds } }],
+      ...(opts.includeArchived ? {} : { status: { not: "archived" as const } }),
+    },
     orderBy: [{ division: "asc" }, { name: "asc" }],
     include: { business: { select: { id: true, name: true } } },
   });
@@ -16,11 +24,19 @@ export async function listAgents(db: PrismaClient, userId: string) {
     _count: { _all: true },
     _sum: { costUsd: true },
   });
+  const versions = await db.agentVersion.findMany({
+    where: { OR: agents.map((a) => ({ agentId: a.id, version: a.currentVersion })) },
+    select: { agentId: true, model: true, outputSchemaKey: true },
+  });
   return agents.map((agent) => {
+    const current = versions.find((v) => v.agentId === agent.id);
     const rows = stats.filter((s) => s.agentId === agent.id);
     const count = (status: string) => rows.find((r) => r.status === status)?._count._all ?? 0;
     return {
       ...agent,
+      model: current?.model ?? null,
+      outputSchemaKey: current?.outputSchemaKey ?? null,
+      executable: !!current && !!getContract(current.outputSchemaKey),
       stats: {
         total: rows.reduce((n, r) => n + r._count._all, 0),
         succeeded: count("succeeded"),
@@ -46,7 +62,10 @@ export async function getAgent(db: PrismaClient, userId: string, agentId: string
     where: { agentId, businessId: { in: businessIds } },
     orderBy: { queuedAt: "desc" },
     take: 50,
-    include: { task: { select: { id: true, title: true } }, business: { select: { name: true } } },
+    include: {
+      task: { select: { id: true, title: true, kind: true } },
+      business: { select: { name: true } },
+    },
   });
   return { agent, runs };
 }

@@ -66,7 +66,7 @@ export const NAV_SECTIONS: { title: string; items: NavItem[] }[] = [
         href: "/agent-builder",
         label: "Agent Builder",
         icon: Wrench,
-        status: "planned",
+        status: "live",
         milestone: 3,
         summary: "Create, version and sandbox-test custom agents without code changes.",
       },

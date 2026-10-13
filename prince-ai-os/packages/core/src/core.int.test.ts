@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { AnthropicProvider, MockProvider, ProviderError, type AIProvider } from "@prince/ai";
+import { MemoryQueue, ScriptedProvider } from "./test-helpers";
 import { createPrismaClient } from "@prince/database";
 import {
   ForbiddenError,
@@ -14,55 +15,23 @@ import {
   listTasks,
   requestRun,
   retryRun,
-  type RunQueue,
+  type RunPolicy,
 } from "./index";
 
 const db = createPrismaClient(process.env.DATABASE_URL);
 
-class MemoryQueue implements RunQueue {
-  jobs: { runId: string; attempts: number }[] = [];
-  started = new Set<string>();
-  async enqueue(runId: string, opts: { attempts: number }) {
-    this.jobs.push({ runId, ...opts });
-  }
-  async remove(runId: string) {
-    if (this.started.has(runId)) return false;
-    const before = this.jobs.length;
-    this.jobs = this.jobs.filter((j) => j.runId !== runId);
-    return this.jobs.length < before;
-  }
-}
-
-/** Provider that returns a fixed output or throws a fixed error, for exercising executor branches. */
-class ScriptedProvider implements AIProvider {
-  readonly name = "anthropic" as const;
-  calls = 0;
-  constructor(private readonly behaviour: { output?: unknown; error?: ProviderError }) {}
-  isConfigured() {
-    return true;
-  }
-  async completeStructured<T>() {
-    this.calls += 1;
-    if (this.behaviour.error) throw this.behaviour.error;
-    return {
-      provider: this.name,
-      model: "claude-opus-5-5",
-      output: this.behaviour.output as T,
-      rawText: JSON.stringify(this.behaviour.output),
-      usage: {
-        inputTokens: 1000,
-        outputTokens: 500,
-        cacheCreationInputTokens: 0,
-        cacheReadInputTokens: 200,
-      },
-      stopReason: "end_turn",
-      latencyMs: 42,
-    };
-  }
-}
-
 // Generous limits so spend accumulated by earlier suite runs never trips unrelated tests.
 const budget = { dailyUsd: 1000, monthlyUsd: 100000 };
+const livePolicy: RunPolicy = {
+  defaultProvider: "anthropic",
+  anthropicConfigured: true,
+  allowMock: true,
+  budget,
+};
+const mockOnly = (provider: AIProvider = new MockProvider({ delayMs: 5 })) => ({ mock: provider });
+/** Queues a run for the (scripted) Claude provider. */
+const requestLive = (taskId: string) =>
+  requestRun(db, queue, owner, taskId, { provider: "anthropic", policy: livePolicy });
 let owner: string;
 let outsider: string;
 let businessId: string;
@@ -157,11 +126,10 @@ describe("run lifecycle", () => {
   it("executes on the mock provider and persists output, usage, cost and events", async () => {
     const task = await newTask("market-research");
     const run = await requestRun(db, queue, owner, task.id);
-    const outcome = await executeRun(
-      { db, provider: new MockProvider({ delayMs: 5 }), budget },
-      run.id,
-      { attempt: 1, maxAttempts: 3 },
-    );
+    const outcome = await executeRun({ db, providers: mockOnly(), budget }, run.id, {
+      attempt: 1,
+      maxAttempts: 3,
+    });
     expect(outcome.status).toBe("succeeded");
     const saved = await db.agentRun.findUniqueOrThrow({
       where: { id: run.id },
@@ -186,7 +154,7 @@ describe("run lifecycle", () => {
 
   it("computes cost from provider usage and the price table", async () => {
     const task = await newTask("copywriting");
-    const run = await requestRun(db, queue, owner, task.id);
+    const run = await requestLive(task.id);
     const provider = new ScriptedProvider({
       output: {
         brief: "b",
@@ -195,7 +163,10 @@ describe("run lifecycle", () => {
         complianceNotes: [],
       },
     });
-    await executeRun({ db, provider, budget }, run.id, { attempt: 1, maxAttempts: 3 });
+    await executeRun({ db, providers: { anthropic: provider }, budget }, run.id, {
+      attempt: 1,
+      maxAttempts: 3,
+    });
     const saved = await db.agentRun.findUniqueOrThrow({ where: { id: run.id } });
     // 1000 in × $4/M + 500 out × $20/M + 200 cache read × $0.20/M
     expect(Number(saved.costUsd)).toBeCloseTo(0.004 + 0.01 + 0.00004, 6);
@@ -204,11 +175,15 @@ describe("run lifecycle", () => {
 
   it("fails clearly when the Claude API key is not configured", async () => {
     const task = await newTask("market-research");
-    const run = await requestRun(db, queue, owner, task.id);
-    await executeRun({ db, provider: new AnthropicProvider(undefined), budget }, run.id, {
-      attempt: 1,
-      maxAttempts: 3,
-    });
+    const run = await requestLive(task.id);
+    await executeRun(
+      { db, providers: { anthropic: new AnthropicProvider(undefined) }, budget },
+      run.id,
+      {
+        attempt: 1,
+        maxAttempts: 3,
+      },
+    );
     expect(await db.agentRun.findUniqueOrThrow({ where: { id: run.id } })).toMatchObject({
       status: "failed",
       errorCode: "not_configured",
@@ -217,17 +192,20 @@ describe("run lifecycle", () => {
 
   it("hands transient errors back for retry, then fails on the final attempt", async () => {
     const task = await newTask("market-research");
-    const run = await requestRun(db, queue, owner, task.id);
+    const run = await requestLive(task.id);
     const provider = new ScriptedProvider({
       error: new ProviderError("rate_limited", "slow down", true),
     });
-    const first = await executeRun({ db, provider, budget }, run.id, {
+    const first = await executeRun({ db, providers: { anthropic: provider }, budget }, run.id, {
       attempt: 1,
       maxAttempts: 2,
     });
     expect(first.status).toBe("retry");
     expect((await db.agentRun.findUniqueOrThrow({ where: { id: run.id } })).status).toBe("queued");
-    const last = await executeRun({ db, provider, budget }, run.id, { attempt: 2, maxAttempts: 2 });
+    const last = await executeRun({ db, providers: { anthropic: provider }, budget }, run.id, {
+      attempt: 2,
+      maxAttempts: 2,
+    });
     expect(last.status).toBe("failed");
     expect(await db.agentRun.findUniqueOrThrow({ where: { id: run.id } })).toMatchObject({
       status: "failed",
@@ -235,13 +213,13 @@ describe("run lifecycle", () => {
       attempts: 2,
     });
     // A new run is created on manual retry so every attempt stays in history.
-    const again = await retryRun(db, queue, owner, run.id);
+    const again = await retryRun(db, queue, owner, run.id, livePolicy);
     expect(again.id).not.toBe(run.id);
   });
 
   it("rejects outputs that fail the agent's evaluation criteria", async () => {
     const task = await newTask("executive-coordinator");
-    const run = await requestRun(db, queue, owner, task.id);
+    const run = await requestLive(task.id);
     const provider = new ScriptedProvider({
       output: {
         objective: "o",
@@ -259,7 +237,10 @@ describe("run lifecycle", () => {
         decisionsForOwner: [],
       },
     });
-    await executeRun({ db, provider, budget }, run.id, { attempt: 1, maxAttempts: 3 });
+    await executeRun({ db, providers: { anthropic: provider }, budget }, run.id, {
+      attempt: 1,
+      maxAttempts: 3,
+    });
     expect(await db.agentRun.findUniqueOrThrow({ where: { id: run.id } })).toMatchObject({
       status: "failed",
       errorCode: "evaluation_failed",
@@ -269,24 +250,31 @@ describe("run lifecycle", () => {
   it("enforces the per-run and global budgets before calling the provider", async () => {
     const provider = new ScriptedProvider({ output: {} });
     const t1 = await newTask("market-research");
-    const r1 = await requestRun(db, queue, owner, t1.id);
-    await executeRun({ db, provider, budget: { dailyUsd: 0, monthlyUsd: 100000 } }, r1.id, {
-      attempt: 1,
-      maxAttempts: 3,
-    });
+    const r1 = await requestLive(t1.id);
+    await executeRun(
+      { db, providers: { anthropic: provider }, budget: { dailyUsd: 0, monthlyUsd: 100000 } },
+      r1.id,
+      {
+        attempt: 1,
+        maxAttempts: 3,
+      },
+    );
     expect(await db.agentRun.findUniqueOrThrow({ where: { id: r1.id } })).toMatchObject({
       status: "failed",
       errorCode: "budget_exceeded",
     });
 
     const t2 = await newTask("market-research");
-    const r2 = await requestRun(db, queue, owner, t2.id);
+    const r2 = await requestLive(t2.id);
     await db.agentVersion.updateMany({
       where: { agentId: agentIds["market-research"]! },
       data: { budgetUsdPerRun: 0.0001 },
     });
     try {
-      await executeRun({ db, provider, budget }, r2.id, { attempt: 1, maxAttempts: 3 });
+      await executeRun({ db, providers: { anthropic: provider }, budget }, r2.id, {
+        attempt: 1,
+        maxAttempts: 3,
+      });
     } finally {
       await db.agentVersion.updateMany({
         where: { agentId: agentIds["market-research"]! },
@@ -308,10 +296,14 @@ describe("run lifecycle", () => {
     expect(await db.agentRun.findUniqueOrThrow({ where: { id: run.id } })).toMatchObject({
       status: "cancelled",
     });
-    const outcome = await executeRun({ db, provider: new MockProvider(), budget }, run.id, {
-      attempt: 1,
-      maxAttempts: 3,
-    });
+    const outcome = await executeRun(
+      { db, providers: mockOnly(new MockProvider()), budget },
+      run.id,
+      {
+        attempt: 1,
+        maxAttempts: 3,
+      },
+    );
     expect(outcome.status).toBe("skipped");
   });
 
@@ -320,7 +312,7 @@ describe("run lifecycle", () => {
     const run = await requestRun(db, queue, owner, task.id);
     queue.started.add(run.id);
     const exec = executeRun(
-      { db, provider: new MockProvider({ delayMs: 5_000 }), budget, cancelPollMs: 50 },
+      { db, providers: mockOnly(new MockProvider({ delayMs: 5_000 })), budget, cancelPollMs: 50 },
       run.id,
       { attempt: 1, maxAttempts: 3 },
     );

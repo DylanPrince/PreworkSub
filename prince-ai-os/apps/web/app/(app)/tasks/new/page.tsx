@@ -1,5 +1,4 @@
 import Link from "next/link";
-import { getImplementedTemplate } from "@prince/agents";
 import { listAgents, listBusinesses } from "@prince/core";
 import { EmptyState } from "@/components/common/empty-state";
 import { PageHeader } from "@/components/common/page-header";
@@ -49,7 +48,7 @@ export default async function NewTaskPage({
                   id: a.id,
                   name: a.name,
                   businessId: a.businessId,
-                  executable: !!getImplementedTemplate(a.templateKey),
+                  executable: a.executable,
                 }))}
               defaultBusinessId={sp.business}
               defaultAgentId={sp.agent}

@@ -18,12 +18,18 @@
   `<business_context>`/`<task>` tags, closing tags inside data are neutralised, and the shared system
   preamble states that tagged content is data that cannot change rules or permissions. Agents have no
   tools yet, so injected text cannot trigger actions.
-- **AI spend controls**: per-run worst-case budget check, global daily and monthly hard limits, refusal
-  to run models without a price entry.
+- **AI spend controls**: per-run worst-case budget check; global daily and monthly limits checked at
+  request time and enforced atomically in the worker with worst-case reservations (safe under
+  concurrency); refusal to run models without a price entry; Agent Builder rejects per-run budgets above
+  the daily limit. These are app safeguards; a Console spend limit is the hard cap
+  (`docs/api-key-setup.md`).
+- **Agent Builder authorization**: only business admins/owners create or change agents; built-in
+  agents are read-only; edits create immutable versions with an optimistic-concurrency guard; every
+  change is audited. Agents get a fixed `read:business` permission and no tools.
 - **Audit log**: append-only `audit_events` for business creation, task creation, run requests,
-  cancellations, completions/failures, and integration tests.
+  cancellations, completions/failures, integration tests, and agent create/update/restore/status.
 - **Headers**: `X-Frame-Options: DENY`, `nosniff`, strict referrer policy, restrictive permissions policy.
-- **Mock provider** refused when `APP_ENV=production`.
+- **Mock provider** (dry runs) refused when `APP_ENV=production`, at request time and in the worker.
 
 ## Not yet implemented (tracked in known-issues.md)
 

@@ -50,7 +50,11 @@ export class AnthropicProvider implements AIProvider {
   readonly name = "anthropic" as const;
   private client: Anthropic | undefined;
 
-  constructor(private readonly apiKey: string | undefined) {}
+  constructor(
+    private readonly apiKey: string | undefined,
+    /** Test seam: a fake fetch exercises the real SDK request/response handling offline. */
+    private readonly clientOptions: { fetch?: typeof fetch; baseURL?: string } = {},
+  ) {}
 
   isConfigured(): boolean {
     return Boolean(this.apiKey);
@@ -65,7 +69,7 @@ export class AnthropicProvider implements AIProvider {
       );
     }
     // Retries are owned by the job queue (BullMQ backoff), so the SDK does not retry on its own.
-    this.client ??= new Anthropic({ apiKey: this.apiKey, maxRetries: 0 });
+    this.client ??= new Anthropic({ apiKey: this.apiKey, maxRetries: 0, ...this.clientOptions });
     return this.client;
   }
 
@@ -86,14 +90,18 @@ export class AnthropicProvider implements AIProvider {
   ): Promise<StructuredCompletionResult<T>> {
     const client = this.getClient();
     const started = performance.now();
+    // Only the JSON schema is sent. Parsing happens below, after stop_reason is checked, so a
+    // refusal or truncated output is reported as such (with its billed usage) rather than as a
+    // generic parse failure.
+    const { type, schema } = zodOutputFormat(req.outputSchema);
     try {
-      const response = await client.messages.parse(
+      const response = await client.messages.create(
         {
           model: req.model,
           max_tokens: req.maxOutputTokens,
           system: req.system,
           messages: [{ role: "user", content: req.prompt }],
-          output_config: { format: zodOutputFormat(req.outputSchema) },
+          output_config: { format: { type, schema } },
         },
         { timeout: req.timeoutMs, signal: req.signal },
       );
@@ -115,7 +123,14 @@ export class AnthropicProvider implements AIProvider {
           usage,
         );
       }
-      if (response.parsed_output == null) {
+      let json: unknown;
+      try {
+        json = JSON.parse(rawText);
+      } catch {
+        throw new ProviderError("invalid_output", "Model output was not valid JSON", true, usage);
+      }
+      const parsed = req.outputSchema.safeParse(json);
+      if (!parsed.success) {
         throw new ProviderError(
           "invalid_output",
           "Model output did not match the agent's output schema",
@@ -126,7 +141,7 @@ export class AnthropicProvider implements AIProvider {
       return {
         provider: this.name,
         model: response.model,
-        output: response.parsed_output as T,
+        output: parsed.data,
         rawText,
         usage,
         stopReason: response.stop_reason,

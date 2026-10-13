@@ -33,7 +33,8 @@ test.describe.serial("first vertical slice", () => {
     page.on("console", (m) => m.type() === "error" && consoleErrors.push(m.text()));
 
     await signUp(page);
-    await expect(page.getByText("Mock AI provider is active")).toBeVisible();
+    await expect(page.getByText("Mock mode is the default")).toBeVisible();
+    await expect(page.getByRole("link", { name: /AI status: Mock mode/ })).toBeVisible();
 
     // Business workspace
     await page.getByRole("link", { name: "Businesses" }).first().click();
@@ -95,6 +96,55 @@ test.describe.serial("first vertical slice", () => {
     await expect(page.getByRole("region", { name: /Earlier run/ })).toBeVisible({
       timeout: 15_000,
     });
+  });
+
+  test("owner builds, dry-runs and versions a custom agent", async ({ page }) => {
+    await signIn(page);
+    await page.goto("/agent-builder");
+    await page.getByRole("link", { name: "New agent" }).click();
+
+    // Server-side validation is surfaced per field
+    await page.getByRole("button", { name: "Create agent" }).click();
+    await expect(page.getByText("Name must be at least 3 characters")).toBeVisible();
+
+    await page.getByLabel("Name", { exact: true }).fill("Pricing Reviewer");
+    await page.getByLabel("Division").selectOption("Business Operations");
+    await page.getByLabel("Specialization").fill("Pricing review");
+    await page.getByLabel("Description").fill("Reviews pricing pages and suggests improvements.");
+    await page
+      .getByLabel("Instructions (system prompt)")
+      .fill("You review pricing for this business. Explain each suggestion and flag missing data.");
+    await page.getByRole("button", { name: "Create agent" }).click();
+    await expect(page.getByRole("heading", { level: 1, name: "Pricing Reviewer" })).toBeVisible();
+
+    // No API key in this environment: paid tests are disabled with an explanation
+    await expect(page.getByRole("button", { name: "Test with Claude" })).toBeDisabled();
+    await expect(
+      page.getByText(/Claude is not configured on the server yet/).first(),
+    ).toBeVisible();
+
+    await page.getByLabel("Sample task").fill("Review the pricing of our two-person tent.");
+    await page.getByRole("button", { name: "Dry run (mock)" }).click();
+    const latest = page.getByRole("region", { name: "Latest run" });
+    await expect(latest.getByText("succeeded", { exact: true }).first()).toBeVisible({
+      timeout: 30_000,
+    });
+    await expect(latest.getByTitle(/Generated locally without an AI model/)).toHaveText(
+      "Mock output",
+    );
+    await expect(page.getByRole("region", { name: "Agent output" })).toContainText("MOCK OUTPUT");
+
+    // Editing saves a new immutable version
+    await page.goBack();
+    await expect(page.getByRole("heading", { level: 1, name: "Pricing Reviewer" })).toBeVisible();
+    await page.getByLabel("Max output tokens").fill("1024");
+    await page.getByLabel("Change note (optional)").fill("Shorter reports");
+    await page.getByRole("button", { name: "Save as v2" }).click();
+    await expect(
+      page.getByRole("status").filter({ hasText: "Saved as a new version." }),
+    ).toBeVisible();
+    await expect(page.getByText(/Shorter reports/)).toBeVisible();
+    await expect(page.getByRole("button", { name: "Save as v3" })).toBeVisible();
   });
 
   test("every sidebar page renders in light and dark mode", async ({ page }) => {

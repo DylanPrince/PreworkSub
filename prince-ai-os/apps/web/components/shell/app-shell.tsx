@@ -2,6 +2,7 @@
 import { Menu, X } from "lucide-react";
 import Link from "next/link";
 import { useState, type ReactNode } from "react";
+import { AiStatusPill, type AiStatusView } from "@/components/common/ai-status";
 import { Button } from "@/components/ui/button";
 import { SidebarNav } from "./sidebar";
 import { ThemeToggle } from "./theme-toggle";
@@ -23,11 +24,11 @@ function Brand() {
 
 export function AppShell({
   user,
-  providerLabel,
+  aiStatus,
   children,
 }: {
   user: { name: string; email: string };
-  providerLabel: string;
+  aiStatus: AiStatusView;
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
@@ -76,12 +77,7 @@ export function AppShell({
           >
             <Menu />
           </Button>
-          <span
-            className="rounded-md border border-border px-2 py-1 text-[11px] text-muted-foreground"
-            title="AI provider used by the worker"
-          >
-            AI: {providerLabel}
-          </span>
+          <AiStatusPill status={aiStatus} />
           <div className="ml-auto flex items-center gap-1">
             <ThemeToggle />
             <UserMenu name={user.name} email={user.email} />

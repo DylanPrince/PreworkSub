@@ -1,30 +1,70 @@
 "use client";
 import { useQuery } from "@tanstack/react-query";
-import { Play, RotateCcw, Square } from "lucide-react";
+import { FlaskConical, Play, RotateCcw, Square } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { cancelRunAction, retryRunAction, runTaskAction } from "@/lib/actions";
 
-export function RunTaskButton({ taskId, disabled }: { taskId: string; disabled?: boolean }) {
+export interface RunModes {
+  defaultProvider: "anthropic" | "mock";
+  /** Paid Claude run allowed right now; otherwise `liveBlockedReason` says why. */
+  liveAvailable: boolean;
+  liveBlockedReason?: string;
+  mockAvailable: boolean;
+}
+
+/**
+ * Starts a run. "Run with Claude" makes a paid API call (subject to spending limits); "Dry run"
+ * uses the free mock provider and is labelled as mock output everywhere it appears.
+ */
+export function RunTaskButton({
+  taskId,
+  modes,
+  disabled,
+}: {
+  taskId: string;
+  modes: RunModes;
+  disabled?: boolean;
+}) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
-  const [key] = useState(() => crypto.randomUUID());
+  const [key, setKey] = useState(() => crypto.randomUUID());
+  const runWith = (provider: "anthropic" | "mock") =>
+    start(async () => {
+      const res = await runTaskAction(taskId, key, provider);
+      if (!res.ok) setError(res.error);
+      else setError(null);
+      setKey(crypto.randomUUID());
+      router.refresh();
+    });
+  const liveFirst = modes.defaultProvider === "anthropic";
   return (
     <div className="flex flex-col items-end gap-1">
-      <Button
-        disabled={pending || disabled}
-        onClick={() =>
-          start(async () => {
-            const res = await runTaskAction(taskId, key);
-            if (!res.ok) setError(res.error);
-            router.refresh();
-          })
-        }
-      >
-        <Play /> Run agent
-      </Button>
+      <div className="flex flex-wrap justify-end gap-2">
+        <Button
+          variant={liveFirst ? "default" : "secondary"}
+          disabled={pending || disabled || !modes.liveAvailable}
+          title={modes.liveAvailable ? "Paid Claude API call" : modes.liveBlockedReason}
+          onClick={() => runWith("anthropic")}
+        >
+          <Play /> Run with Claude
+        </Button>
+        {modes.mockAvailable && (
+          <Button
+            variant={liveFirst ? "secondary" : "default"}
+            disabled={pending || disabled}
+            title="Free run on the mock provider with placeholder output"
+            onClick={() => runWith("mock")}
+          >
+            <FlaskConical /> Dry run (mock)
+          </Button>
+        )}
+      </div>
+      {!modes.liveAvailable && modes.liveBlockedReason && (
+        <p className="text-xs text-muted-foreground">{modes.liveBlockedReason}</p>
+      )}
       {error && (
         <p role="alert" className="text-xs text-danger">
           {error}

@@ -1,3 +1,4 @@
+import { z } from "zod";
 import type { Prisma, PrismaClient } from "@prince/database";
 import {
   ProviderError,
@@ -5,21 +6,18 @@ import {
   estimateMaxCostUsd,
   roughTokenEstimate,
   type AIProvider,
+  type ProviderErrorCode,
+  type ProviderName,
   type TokenUsage,
 } from "@prince/ai";
-import {
-  OUTPUT_SCHEMAS,
-  buildSystemPrompt,
-  buildUserPrompt,
-  getImplementedTemplate,
-  isOutputSchemaKey,
-} from "@prince/agents";
+import { OUTPUT_SCHEMAS, buildSystemPrompt, buildUserPrompt, getContract } from "@prince/agents";
 import { recordAudit } from "./audit";
-import { checkGlobalBudget, type BudgetLimits } from "./budget";
+import { reserveBudget, type BudgetLimits } from "./budget";
 
 export interface ExecuteRunDeps {
   db: PrismaClient;
-  provider: AIProvider;
+  /** Providers this worker can use. A run executes on the provider recorded when it was queued. */
+  providers: Partial<Record<ProviderName, AIProvider>>;
   budget: BudgetLimits;
   /** How often to poll Postgres for a cancellation request while the provider call is in flight. */
   cancelPollMs?: number;
@@ -34,14 +32,21 @@ export type ExecuteRunOutcome =
   | { status: "succeeded" | "failed" | "cancelled" | "skipped" }
   | { status: "retry"; error: ProviderError };
 
-function usageData(u: TokenUsage | undefined) {
-  if (!u) return {};
-  return {
-    inputTokens: u.inputTokens,
-    outputTokens: u.outputTokens,
-    cacheCreationInputTokens: u.cacheCreationInputTokens,
-    cacheReadInputTokens: u.cacheReadInputTokens,
-  };
+/**
+ * Errors where the request may have reached the model before it ended, so tokens may have been
+ * billed without usage being reported. These are charged at the reserved worst case and flagged
+ * as an estimate, so the budget errs on the side of overcounting.
+ */
+const POSSIBLY_BILLED_WITHOUT_USAGE: ProviderErrorCode[] = [
+  "cancelled",
+  "timeout",
+  "network",
+  "provider_error",
+];
+
+/** Token estimate for the budget pre-check, with headroom for tokenizer variance and schema overhead. */
+export function estimateInputTokens(system: string, prompt: string, schemaJson: string): number {
+  return Math.ceil(roughTokenEstimate(system + prompt + schemaJson) * 1.25) + 500;
 }
 
 /**
@@ -54,7 +59,7 @@ export async function executeRun(
   runId: string,
   ctx: ExecuteRunContext,
 ): Promise<ExecuteRunOutcome> {
-  const { db, provider } = deps;
+  const { db } = deps;
   const run = await db.agentRun.findUnique({
     where: { id: runId },
     include: { task: true, business: true, agent: true },
@@ -62,6 +67,28 @@ export async function executeRun(
   if (!run) return { status: "skipped" };
   if (run.status === "succeeded" || run.status === "failed" || run.status === "cancelled")
     return { status: "skipped" };
+
+  // Totals carried over from earlier attempts of this run (retries keep accumulating).
+  const prior = {
+    costUsd: Number(run.costUsd ?? 0),
+    inputTokens: run.inputTokens ?? 0,
+    outputTokens: run.outputTokens ?? 0,
+    cacheCreationInputTokens: run.cacheCreationInputTokens ?? 0,
+    cacheReadInputTokens: run.cacheReadInputTokens ?? 0,
+  };
+  let costIsEstimate = run.costIsEstimate;
+
+  /** Adds this attempt's usage and cost to the run totals and releases the budget reservation. */
+  const accrue = (usage: TokenUsage | undefined, attemptCostUsd: number | undefined) => ({
+    inputTokens: prior.inputTokens + (usage?.inputTokens ?? 0),
+    outputTokens: prior.outputTokens + (usage?.outputTokens ?? 0),
+    cacheCreationInputTokens:
+      prior.cacheCreationInputTokens + (usage?.cacheCreationInputTokens ?? 0),
+    cacheReadInputTokens: prior.cacheReadInputTokens + (usage?.cacheReadInputTokens ?? 0),
+    costUsd: prior.costUsd + (attemptCostUsd ?? 0),
+    costIsEstimate,
+    reservedUsd: null,
+  });
 
   const event = (type: string, message: string, data?: Prisma.InputJsonValue) =>
     db.runEvent.create({ data: { runId, type, message, data } });
@@ -76,6 +103,7 @@ export async function executeRun(
       await tx.agentRun.update({
         where: { id: runId },
         data: {
+          reservedUsd: null,
           ...data,
           status,
           finishedAt: new Date(),
@@ -99,11 +127,11 @@ export async function executeRun(
 
   if (run.cancelRequestedAt) return finish("cancelled", {}, "Cancelled before execution started");
 
-  const template = getImplementedTemplate(run.agent.templateKey);
   const version = await db.agentVersion.findUnique({
     where: { agentId_version: { agentId: run.agentId, version: run.agentVersion } },
   });
-  if (!template || !version || !isOutputSchemaKey(version.outputSchemaKey)) {
+  const contract = version ? getContract(version.outputSchemaKey) : undefined;
+  if (!version || !contract) {
     return finish(
       "failed",
       { errorCode: "not_executable", errorMessage: "Agent has no executable configuration" },
@@ -113,27 +141,30 @@ export async function executeRun(
   if (run.agent.status !== "active") {
     return finish(
       "failed",
-      { errorCode: "agent_disabled", errorMessage: "Agent is disabled" },
-      "Agent is disabled",
+      { errorCode: "agent_disabled", errorMessage: `Agent is ${run.agent.status}` },
+      `Agent is ${run.agent.status}`,
     );
   }
-  if (!provider.isConfigured()) {
+  const provider = deps.providers[run.provider as ProviderName];
+  if (!provider || !provider.isConfigured()) {
+    const message =
+      run.provider === "anthropic"
+        ? "ANTHROPIC_API_KEY is not configured. Add it to the server environment, then retry."
+        : `Provider "${run.provider}" is not available on this worker`;
     return finish(
       "failed",
-      {
-        errorCode: "not_configured",
-        errorMessage:
-          "ANTHROPIC_API_KEY is not configured. Add it to the server environment, then retry.",
-      },
+      { errorCode: "not_configured", errorMessage: message },
       "AI provider requires configuration",
     );
   }
+  const isMock = provider.name === "mock";
 
   const system = buildSystemPrompt(version.systemPrompt);
   const prompt = buildUserPrompt(run.business, run.task);
+  const schema = OUTPUT_SCHEMAS[contract.key];
 
   // Budget enforcement uses the price table; models without a price entry are refused.
-  const priceModel = provider.name === "mock" ? "mock" : version.model;
+  const priceModel = isMock ? "mock" : version.model;
   const price = await db.modelPrice.findUnique({ where: { model: priceModel } });
   if (!price) {
     return finish(
@@ -149,7 +180,7 @@ export async function executeRun(
     cacheReadPerMTok: Number(price.cacheReadPerMTok),
   };
   const projected = estimateMaxCostUsd(
-    roughTokenEstimate(system + prompt),
+    estimateInputTokens(system, prompt, JSON.stringify(z.toJSONSchema(schema))),
     version.maxOutputTokens,
     priceNums,
   );
@@ -164,27 +195,29 @@ export async function executeRun(
       "Blocked by per-run budget",
     );
   }
-  const budget = await checkGlobalBudget(db, deps.budget, projected);
-  if (!budget.ok)
+
+  // Atomically check the global limits and reserve the worst case before calling a paid provider.
+  // Mock runs cost nothing, so they neither need nor consume budget.
+  const reservation = isMock
+    ? await db.agentRun
+        .update({
+          where: { id: runId },
+          data: { status: "running", startedAt: new Date(), attempts: ctx.attempt },
+        })
+        .then(() => ({ ok: true }) as const)
+    : await reserveBudget(db, deps.budget, runId, projected, { attempts: ctx.attempt });
+  if (!reservation.ok)
     return finish(
       "failed",
-      { errorCode: "budget_exceeded", errorMessage: budget.reason },
+      { errorCode: "budget_exceeded", errorMessage: reservation.reason },
       "Blocked by global budget",
     );
-
-  const startedAt = run.startedAt ?? new Date();
-  await db.agentRun.update({
-    where: { id: runId },
-    data: { status: "running", startedAt, attempts: ctx.attempt },
-  });
-  run.startedAt = startedAt;
+  run.startedAt ??= new Date();
   await db.task.update({ where: { id: run.taskId }, data: { status: "running" } });
   await event(
     "started",
-    `Attempt ${ctx.attempt}/${ctx.maxAttempts} on ${provider.name} (${provider.name === "mock" ? "mock" : version.model})`,
-    {
-      projectedMaxCostUsd: projected,
-    },
+    `Attempt ${ctx.attempt}/${ctx.maxAttempts} on ${isMock ? "mock provider (no charge)" : `Claude ${version.model}`}`,
+    { reservedUsd: isMock ? 0 : projected },
   );
 
   const controller = new AbortController();
@@ -201,7 +234,6 @@ export async function executeRun(
   }, deps.cancelPollMs ?? 1000);
 
   try {
-    const schema = OUTPUT_SCHEMAS[version.outputSchemaKey];
     const result = await provider.completeStructured({
       model: version.model,
       system,
@@ -210,77 +242,66 @@ export async function executeRun(
       outputSchema: schema as never,
       timeoutMs: version.timeoutMs,
       signal: controller.signal,
-      mockOutput: () => template.mockOutput(run.task),
+      mockOutput: () => contract.mockOutput(run.task),
     });
-    const problems = template.evaluate(result.output);
-    const costUsd = computeCostUsd(result.usage, priceNums);
-    await db.agentRun.update({
-      where: { id: runId },
-      data: { providerLatencyMs: result.latencyMs },
-    });
+    const problems = contract.evaluate(result.output);
+    const attemptCost = computeCostUsd(result.usage, priceNums);
+    const common = {
+      ...accrue(result.usage, attemptCost),
+      model: result.model,
+      stopReason: result.stopReason,
+      providerLatencyMs: result.latencyMs,
+      output: result.output as Prisma.InputJsonValue,
+      outputText: result.rawText,
+    };
     if (problems.length > 0) {
       return finish(
         "failed",
-        {
-          ...usageData(result.usage),
-          costUsd,
-          model: result.model,
-          stopReason: result.stopReason,
-          output: result.output as Prisma.InputJsonValue,
-          outputText: result.rawText,
-          errorCode: "evaluation_failed",
-          errorMessage: problems.join("; "),
-        },
+        { ...common, errorCode: "evaluation_failed", errorMessage: problems.join("; ") },
         `Output failed evaluation: ${problems.join("; ")}`,
       );
     }
     return finish(
       "succeeded",
-      {
-        ...usageData(result.usage),
-        costUsd,
-        model: result.model,
-        stopReason: result.stopReason,
-        output: result.output as Prisma.InputJsonValue,
-        outputText: result.rawText,
-        errorCode: null,
-        errorMessage: null,
-      },
-      `Completed: ${result.usage.inputTokens} in / ${result.usage.outputTokens} out tokens, $${costUsd.toFixed(6)}`,
+      { ...common, errorCode: null, errorMessage: null },
+      `Completed: ${result.usage.inputTokens} in / ${result.usage.outputTokens} out tokens, $${attemptCost.toFixed(6)}`,
     );
   } catch (error) {
     const err =
       error instanceof ProviderError
         ? error
         : new ProviderError("provider_error", String(error), false);
-    const usage = err.usage;
-    const costUsd = usage ? computeCostUsd(usage, priceNums) : undefined;
+    let attemptCost: number | undefined;
+    if (err.usage) {
+      attemptCost = computeCostUsd(err.usage, priceNums);
+    } else if (!isMock && POSSIBLY_BILLED_WITHOUT_USAGE.includes(err.code)) {
+      attemptCost = projected;
+      costIsEstimate = true;
+    }
+    const totals = accrue(err.usage, attemptCost);
     const fresh = await db.agentRun.findUnique({
       where: { id: runId },
       select: { cancelRequestedAt: true },
     });
     if (err.code === "cancelled" || fresh?.cancelRequestedAt) {
-      return finish("cancelled", { ...usageData(usage), costUsd }, "Cancelled while running");
+      return finish("cancelled", totals, "Cancelled while running");
     }
     if (err.retryable && ctx.attempt < ctx.maxAttempts) {
       await db.agentRun.update({
         where: { id: runId },
-        data: { status: "queued", errorCode: err.code, errorMessage: err.message },
+        data: { ...totals, status: "queued", errorCode: err.code, errorMessage: err.message },
       });
       await db.task.update({ where: { id: run.taskId }, data: { status: "queued" } });
       await event(
         "retry_scheduled",
         `Attempt ${ctx.attempt} failed (${err.code}): ${err.message}. Retrying with backoff.`,
-        {
-          usage: usage ? { ...usage } : null,
-          costUsd: costUsd ?? null,
-        },
+        { usage: err.usage ? { ...err.usage } : null, attemptCostUsd: attemptCost ?? 0 },
       );
       return { status: "retry", error: err };
     }
     return finish(
       "failed",
-      { ...usageData(usage), costUsd, errorCode: err.code, errorMessage: err.message },
+      { ...totals, errorCode: err.code, errorMessage: err.message },
       `${err.code}: ${err.message}`,
     );
   } finally {

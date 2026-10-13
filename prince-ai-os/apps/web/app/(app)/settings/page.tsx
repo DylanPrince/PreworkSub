@@ -1,4 +1,6 @@
+import { getAiStatus, runPolicyFromEnv } from "@prince/core";
 import { formatUsd } from "@prince/shared";
+import { AiStatusPanel } from "@/components/common/ai-status";
 import { PageHeader } from "@/components/common/page-header";
 import { ThemeToggle } from "@/components/shell/theme-toggle";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -9,7 +11,10 @@ export const metadata = { title: "Settings" };
 
 export default async function SettingsPage() {
   const user = await requireUser();
-  const prices = await db.modelPrice.findMany({ orderBy: { inputPerMTok: "desc" } });
+  const [prices, ai] = await Promise.all([
+    db.modelPrice.findMany({ orderBy: { inputPerMTok: "desc" } }),
+    getAiStatus(db, runPolicyFromEnv()),
+  ]);
   return (
     <div className="space-y-4">
       <PageHeader title="Settings" />
@@ -42,12 +47,15 @@ export default async function SettingsPage() {
             <div>
               <CardTitle>AI spend limits</CardTitle>
               <CardDescription>
-                Hard limits enforced by the worker before every run. Set in the server environment.
+                Enforced server-side before every paid request. In-flight runs reserve their
+                worst-case cost so concurrent runs cannot overshoot. These are app safeguards, not a
+                billing cap: also set a spend limit in the Anthropic Console.
               </CardDescription>
             </div>
           </CardHeader>
           <CardContent className="space-y-2 text-sm">
-            <div className="flex justify-between">
+            <AiStatusPanel status={ai} />
+            <div className="flex justify-between border-t border-border pt-3">
               <span className="text-muted-foreground">Daily (AI_DAILY_BUDGET_USD)</span>
               <span className="font-mono">{formatUsd(env.AI_DAILY_BUDGET_USD)}</span>
             </div>
