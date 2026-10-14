@@ -8,9 +8,13 @@ DEVCONTAINER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DEVCONTAINER_DIR/lib.sh"
 cd "$DEVCONTAINER_DIR/../prince-ai-os"
 
-echo "==> Enabling pnpm"
-corepack enable
+echo "==> Enabling pnpm (version pinned in package.json)"
+# /usr/local/bin is root-owned and the image's older global pnpm comes earlier on PATH, so replace
+# that pnpm with corepack's shim in the (user-writable) global npm bin directory.
+corepack enable --install-directory "$(npm prefix -g)/bin" pnpm
+hash -r
 corepack install
+pnpm --version
 
 if [ ! -f .env ]; then
   echo "==> Writing .env (mock mode: no API key, no charges)"

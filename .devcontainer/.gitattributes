@@ -1,0 +1,2 @@
+# Dev container scripts run on Linux; keep LF endings even when edited on Windows.
+* text=auto eol=lf
