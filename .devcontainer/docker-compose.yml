@@ -1,0 +1,42 @@
+# Codespaces / dev container services. Postgres and Redis are reachable only from the app
+# container (by service name); they publish no ports.
+services:
+  app:
+    image: mcr.microsoft.com/devcontainers/typescript-node:1-22-bookworm
+    volumes:
+      - ../..:/workspaces:cached
+    command: sleep infinity
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: prince
+      POSTGRES_PASSWORD: prince
+      POSTGRES_DB: prince_ai_os
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U prince -d prince_ai_os"]
+      interval: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 10
+
+volumes:
+  pgdata:
+  redisdata:
