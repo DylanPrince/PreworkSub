@@ -12,7 +12,17 @@ const securityHeaders = [
   { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
 ];
 
+// Extra hosts allowed to call Server Actions, comma-separated (e.g. a Codespaces forwarded host,
+// whose proxy sends X-Forwarded-Host localhost:3000 while the browser's Origin is *.app.github.dev).
+const serverActionsAllowedOrigins = (process.env.SERVER_ACTIONS_ALLOWED_ORIGINS ?? "")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
 const nextConfig: NextConfig = {
+  experimental: {
+    serverActions: { allowedOrigins: serverActionsAllowedOrigins },
+  },
   transpilePackages: [
     "@prince/shared",
     "@prince/ai",
